@@ -79,6 +79,7 @@ unix:include($$PWD/driver/SocketCanDriver/SocketCanDriver.pri)
 include($$PWD/driver/CANBlastDriver/CANBlastDriver.pri)
 include($$PWD/driver/SLCANDriver/SLCANDriver.pri)
 include($$PWD/driver/GrIPDriver/GrIPDriver.pri)
+include($$PWD/driver/LindeApiDriver/LindeApiDriver.pri)
 
 win32:include($$PWD/driver/CandleApiDriver/CandleApiDriver.pri)
 

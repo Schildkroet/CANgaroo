@@ -15,6 +15,7 @@
 | **SLCAN** | ✅ | ✅ | CANable (SLCAN firmware), Arduino CAN shields |
 | **CANblaster** | ✅ | ✅ | UDP-based remote CAN via [CANblaster](https://github.com/OpenAutoDiagLabs/CANblaster) |
 | **GrIP** | ✅ | ✅ | GrIP protocol |
+| **lin_usb (LindeAPI)** | ✅ | ✅ | USB LIN adapter (VID `0x1d50` / PID `0x606f`). Multi-channel. Master, slave, and monitor modes. Hardware LIN scheduling via LDF. |
 | **zscanfd** | ✅ | ✅ | Zilogic _USB to CAN Adapter_ and _USB to CAN FD Adapter_ via zscanfd driver (CONFIG+=zscanfd) in windows (zscanfd.dll required at runtime) and Linux support via SocketCAN |
 
 ## ⚙️ Features
@@ -80,6 +81,27 @@ sudo setcap cap_net_admin+ep /sbin/ip
 ```
 
 > **Note:** If the interface is set to *"Configured by OS"* in the setup dialog, CANgaroo will not touch the interface configuration and no elevated privileges are needed.
+
+#### USB device permissions (udev rules)
+
+Devices accessed directly via libusb (gs_usb / Candlelight, lin_usb / LindeAPI) need a udev rule so that regular users can open them without `sudo`.
+
+Create `/etc/udev/rules.d/99-cangaroo.rules`:
+
+```
+# gs_usb / Candlelight / CANable (gs_usb firmware)
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="1d50", ATTRS{idProduct}=="606b", MODE="0666", GROUP="plugdev", TAG+="uaccess"
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="1d50", ATTRS{idProduct}=="606f", MODE="0666", GROUP="plugdev", TAG+="uaccess"
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="ca01", MODE="0666", GROUP="plugdev", TAG+="uaccess"
+```
+
+Then reload and re-plug the device:
+
+```bash
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+> **Note:** Your user must be in the `plugdev` group (`sudo usermod -aG plugdev $USER`, then log out and back in).
 
 ### 🪟 Windows
 

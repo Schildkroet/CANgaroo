@@ -66,6 +66,7 @@
 
 #include "driver/SLCANDriver/SLCANDriver.h"
 #include "driver/GrIPDriver/GrIPDriver.h"
+#include "driver/LindeApiDriver/LindeApiDriver.h"
 #include "driver/CANBlastDriver/CANBlasterDriver.h"
 
 #if defined(__linux__)
@@ -238,6 +239,7 @@ void MainWindow::initDrivers()
 
     Backend::instance().addCanDriver(*(new SLCANDriver(Backend::instance())));
     Backend::instance().addCanDriver(*(new GrIPDriver(Backend::instance())));
+    Backend::instance().addCanDriver(*(new LindeApiDriver(Backend::instance())));
 
 #ifdef PEAKCAN_DRIVER
     Backend::instance().addCanDriver(*(new PeakCanDriver(Backend::instance())));
