@@ -39,9 +39,7 @@ QString LindeApiInterface::getName() const
 
 QString LindeApiInterface::getDetailsStr() const
 {
-    return _sharedDev->productName
-           + " ch"
-           + QString::number(_channel);
+    return QStringLiteral("LIN Interface ch%1").arg(_channel);
 }
 
 void LindeApiInterface::applyConfig(const MeasurementInterface &mi)
@@ -79,7 +77,7 @@ void LindeApiInterface::open()
         if (!_sharedDev->open())
         {
             log_error(QStringLiteral("LindeAPI: open failed: %1")
-                          .arg(QString::fromStdString(_sharedDev->lastError)));
+                          .arg(QString::fromStdString(_sharedDev->getLastError())));
             return;
         }
 
@@ -88,9 +86,10 @@ void LindeApiInterface::open()
     }
 
     _sharedDev->openCount++;
-    lock.unlock();
 
-    // Per-channel configuration
+    // Per-channel configuration. openMutex is held for the whole sequence so a
+    // second channel's BusListener thread cannot interleave its EP0 transfers
+    // (setBusConfig/setMode/schedule upload) with this channel's sequence.
     _sharedDev->setHostFormat(_channel);
 
     const bool isMaster     = _settings.linNodeMode() == LinNodeMode::Master;
@@ -139,13 +138,13 @@ void LindeApiInterface::open()
     if (!_sharedDev->setBusConfig(_channel, busCfg))
     {
         log_error(QStringLiteral("LindeAPI: setBusConfig failed: %1")
-                      .arg(QString::fromStdString(_sharedDev->lastError)));
+                      .arg(QString::fromStdString(_sharedDev->getLastError())));
     }
 
     if (!_sharedDev->setMode(_channel, LIN_USB_MODE_STOP))
     {
         log_error(QStringLiteral("LindeAPI: setMode failed: %1")
-                      .arg(QString::fromStdString(_sharedDev->lastError)));
+                      .arg(QString::fromStdString(_sharedDev->getLastError())));
     }
 
     // Upload schedule tables if master mode and LDF is provided
@@ -217,11 +216,6 @@ void LindeApiInterface::open()
         if (ldb.loadFile(ldfPath))
         {
             const QString slaveNode = _settings.linSlaveNode();
-
-            for (const auto &le : ldb.frames())
-            {
-                Q_UNUSED(le)
-            }
 
             // Upload per-frame config for every frame this slave publishes.
             const int tableCount = ldb.scheduleTableNames().size();
@@ -305,7 +299,7 @@ void LindeApiInterface::sendMessage(const BusMessage &msg)
     {
         _numTxErr++;
         log_error(QStringLiteral("LindeAPI: sendFrame failed: %1")
-                      .arg(QString::fromStdString(_sharedDev->lastError)));
+                      .arg(QString::fromStdString(_sharedDev->getLastError())));
         return;
     }
     _numTx++;

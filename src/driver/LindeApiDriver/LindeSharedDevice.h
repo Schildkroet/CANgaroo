@@ -42,6 +42,10 @@ struct LindeSharedDevice
     // Serialises bulk OUT transfers across channels (one shared endpoint).
     QMutex writeMutex;
 
+    // Serialises EP0 control transfers across channels/threads (open-time
+    // configuration bursts plus runtime queries from the GUI thread).
+    QMutex controlMutex;
+
     // Per-channel receive queues fed by the background reader thread.
     QMutex         queueMutex;
     QWaitCondition queueCond;
@@ -57,7 +61,14 @@ struct LindeSharedDevice
     std::thread        readerThread;
     std::atomic<bool>  readerRunning{false};
 
-    std::string lastError;
+    // lastError may be written from any BusListener thread or the GUI thread and
+    // read from another thread, so it is guarded by errorMutex. Use the
+    // setLastError()/getLastError() helpers rather than touching it directly.
+    mutable QMutex errorMutex;
+    std::string    lastError;
+
+    void        setLastError(const std::string &err);
+    std::string getLastError() const;
 
     ~LindeSharedDevice();
 

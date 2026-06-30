@@ -289,7 +289,7 @@ bool LindeApi::getBusState(lin_usb_bus_state_t &state)
 
 bool LindeApi::setHostFormat()
 {
-    lin_usb_host_config_t cfg;
+    lin_usb_host_config_t cfg{};
     cfg.byte_order = 0xEFu; /* little-endian magic; firmware ignores value */
     return controlOut(LIN_USB_BREQ_HOST_FORMAT,
                       static_cast<uint16_t>(channel_),

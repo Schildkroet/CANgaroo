@@ -80,6 +80,7 @@ include($$PWD/driver/CANBlastDriver/CANBlastDriver.pri)
 include($$PWD/driver/SLCANDriver/SLCANDriver.pri)
 include($$PWD/driver/GrIPDriver/GrIPDriver.pri)
 include($$PWD/driver/LindeApiDriver/LindeApiDriver.pri)
+include($$PWD/driver/AiodeDriver/AiodeDriver.pri)
 
 win32:include($$PWD/driver/CandleApiDriver/CandleApiDriver.pri)
 

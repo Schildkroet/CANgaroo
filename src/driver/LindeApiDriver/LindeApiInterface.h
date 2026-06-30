@@ -55,9 +55,11 @@ private:
     std::shared_ptr<LindeSharedDevice> _sharedDev;
     MeasurementInterface               _settings;
 
-    uint64_t _numRx{0};
-    uint64_t _numTx{0};
-    uint64_t _numTxErr{0};
+    // Written on the BusListener thread (readMessage/sendMessage), read on the
+    // GUI thread (CanStatusWindow timer) — must be atomic.
+    std::atomic<uint64_t> _numRx{0};
+    std::atomic<uint64_t> _numTx{0};
+    std::atomic<uint64_t> _numTxErr{0};
 
     // schedule entry counts per table (populated during open)
     static constexpr uint8_t MAX_TABLES = 8;

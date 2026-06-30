@@ -28,30 +28,33 @@
 #include <QVector>
 
 class Backend;
-class GrIPHandler;
+class GpioProvider;
 class QComboBox;
 class QLabel;
 class QPushButton;
 class QSpinBox;
-class QVBoxLayout;
+class QTabWidget;
 
 struct GpioPinRow
 {
     int          pin;
     QComboBox   *dirCombo;   // "Input" / "Output"
     QLabel      *digitalLbl; // "HIGH" / "LOW"
-    QLabel      *voltLbl;    // voltage in mV (pins 0-7) or "N/A" (pins 8-15)
+    QLabel      *voltLbl;    // analog value or "N/A"
     QPushButton *outputBtn;  // visible only when direction == Output
 };
 
 struct GpioDevicePanel
 {
-    GrIPHandler       *handler;
+    enum class Source { Grip, Aiode };
+
+    GpioProvider      *provider;  // owned by the window; deleted on removal
+    Source             source;
     QWidget           *container;
     QPushButton       *toggleBtn;
-    QSpinBox          *cycleSpin; // update interval in ms (5-255)
+    QSpinBox          *cycleSpin; // update interval in ms (5-500)
     bool               enabled{false};
-    QList<GpioPinRow>  pinRows;   // always 16 entries
+    QList<GpioPinRow>  pinRows;
     uint16_t           outputMask{0};
     uint16_t           dirMask{0};
 };
@@ -68,20 +71,26 @@ protected:
     void retranslateUi() override;
 
 private slots:
-    void rebuildRows();
-    void clearRows();
+    void rebuildAll();       // re-scan every source (aiode + GrIP)
+    void refreshGripPanels(); // rebuild only the GrIP panels (on measurement begin/end)
 
 private:
-    void buildDevicePanel(GrIPHandler *handler, const QString &deviceName);
+    void addGripPanels();
+    void addAiodePanels();
+    void removePanels(GpioDevicePanel::Source source);
+    void clearAllPanels();
+    void updatePlaceholder();
+
+    void buildDevicePanel(GpioProvider *provider, GpioDevicePanel::Source source,
+                          const QString &deviceName);
     void onToggleClicked(GpioDevicePanel *panel);
     void onOutputToggled(GpioDevicePanel *panel, int pin);
     void onGpioUpdated(GpioDevicePanel *panel, uint16_t pinState,
                        const QVector<uint16_t> &analogValues);
 
     Backend     &_backend;
-    QWidget     *_rowContainer;
-    QVBoxLayout *_rowLayout;
+    QTabWidget  *_tabs;
     QLabel      *_placeholder;
 
-    QMap<GrIPHandler *, GpioDevicePanel *> _panels;
+    QMap<GpioProvider *, GpioDevicePanel *> _panels;
 };

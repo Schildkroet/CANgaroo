@@ -21,6 +21,8 @@
 
 #include "GpioControlWindow.h"
 
+#include <algorithm>
+
 #include <QComboBox>
 #include <QGridLayout>
 #include <QGroupBox>
@@ -30,6 +32,7 @@
 #include <QScrollArea>
 #include <QSet>
 #include <QSpinBox>
+#include <QTabWidget>
 #include <QVBoxLayout>
 
 #include "core/Backend.h"
@@ -37,8 +40,10 @@
 #include "core/MeasurementNetwork.h"
 #include "core/MeasurementSetup.h"
 #include "driver/BusInterface.h"
-#include "driver/GrIPDriver/GrIP/GrIPHandler.h"
+#include "driver/GpioProvider.h"
 #include "driver/GrIPDriver/GrIPInterface.h"
+#include "driver/AiodeDriver/AiodeApi.hpp"
+#include "GripGpioProvider.h"
 
 GpioControlWindow::GpioControlWindow(QWidget *parent, Backend &backend)
     : ConfigurableWidget(parent)
@@ -47,41 +52,67 @@ GpioControlWindow::GpioControlWindow(QWidget *parent, Backend &backend)
     auto *outerLayout = new QVBoxLayout(this);
     outerLayout->setContentsMargins(4, 4, 4, 4);
 
-    auto *scrollArea = new QScrollArea(this);
-    scrollArea->setWidgetResizable(true);
-    scrollArea->setFrameShape(QFrame::NoFrame);
+    // --- Top bar: manual rescan for hot-plugged aiode devices ---
+    auto *topBar = new QWidget(this);
+    auto *topLayout = new QHBoxLayout(topBar);
+    topLayout->setContentsMargins(0, 0, 0, 0);
+    auto *rescanBtn = new QPushButton(tr("Rescan devices"), topBar);
+    topLayout->addWidget(rescanBtn);
+    topLayout->addStretch();
+    outerLayout->addWidget(topBar);
 
-    _rowContainer = new QWidget(scrollArea);
-    _rowLayout = new QVBoxLayout(_rowContainer);
-    _rowLayout->setAlignment(Qt::AlignTop);
-    _rowLayout->setSpacing(8);
-    _rowLayout->setContentsMargins(0, 0, 0, 0);
+    // One tab per device.
+    _tabs = new QTabWidget(this);
+    _tabs->setDocumentMode(true);
+    outerLayout->addWidget(_tabs);
 
-    _placeholder = new QLabel(tr("No GrIP devices configured"), _rowContainer);
+    // Shown instead of the (empty) tab widget when no devices are present.
+    _placeholder = new QLabel(tr("No GPIO devices found"), this);
     _placeholder->setAlignment(Qt::AlignCenter);
     _placeholder->setEnabled(false);
-    _rowLayout->addWidget(_placeholder);
+    outerLayout->addWidget(_placeholder);
 
-    scrollArea->setWidget(_rowContainer);
-    outerLayout->addWidget(scrollArea);
+    connect(rescanBtn, &QPushButton::clicked, this, &GpioControlWindow::rebuildAll);
+    connect(&_backend, &Backend::beginMeasurement, this, &GpioControlWindow::refreshGripPanels);
+    connect(&_backend, &Backend::endMeasurement,   this, &GpioControlWindow::refreshGripPanels);
 
-    connect(&_backend, &Backend::beginMeasurement, this, &GpioControlWindow::rebuildRows);
-    connect(&_backend, &Backend::endMeasurement,   this, &GpioControlWindow::clearRows);
-
-    if (_backend.isMeasurementRunning())
-        rebuildRows();
+    // aiode devices are discovered independently of any measurement.
+    rebuildAll();
 }
 
-GpioControlWindow::~GpioControlWindow() = default;
+GpioControlWindow::~GpioControlWindow()
+{
+    clearAllPanels();
+}
 
 void GpioControlWindow::retranslateUi()
 {
-    _placeholder->setText(tr("No GrIP devices configured"));
+    _placeholder->setText(tr("No GPIO devices found"));
 }
 
-void GpioControlWindow::rebuildRows()
+/* -------------------------------------------------------------------------
+ * Panel lifecycle
+ * ------------------------------------------------------------------------- */
+
+void GpioControlWindow::rebuildAll()
 {
-    clearRows();
+    clearAllPanels();
+    addAiodePanels();
+    addGripPanels();
+    updatePlaceholder();
+}
+
+void GpioControlWindow::refreshGripPanels()
+{
+    removePanels(GpioDevicePanel::Source::Grip);
+    addGripPanels();
+    updatePlaceholder();
+}
+
+void GpioControlWindow::addGripPanels()
+{
+    if (!_backend.isMeasurementRunning())
+        return;
 
     QSet<GrIPHandler *> seen;
     int deviceIndex = 0;
@@ -103,44 +134,76 @@ void GpioControlWindow::rebuildRows()
                 continue;
 
             seen.insert(h);
-            buildDevicePanel(h, tr("GrIP Device %1").arg(++deviceIndex));
+            auto *provider = new GripGpioProvider(h, tr("GrIP Device %1").arg(++deviceIndex), this);
+            buildDevicePanel(provider, GpioDevicePanel::Source::Grip, provider->name());
         }
     }
-
-    _placeholder->setVisible(_panels.isEmpty());
 }
 
-void GpioControlWindow::clearRows()
+void GpioControlWindow::addAiodePanels()
 {
-    for (auto *panel : std::as_const(_panels))
-    {
-        if (panel->enabled)
-            panel->handler->GpioSetConfig(false, static_cast<uint8_t>(panel->cycleSpin->value()), panel->dirMask);
+    const QList<AiodeApi *> devices = AiodeApi::scan(this);
+    for (AiodeApi *api : devices)
+        buildDevicePanel(api, GpioDevicePanel::Source::Aiode, api->name());
+}
 
-        panel->handler->disconnect(this);
+void GpioControlWindow::removePanels(GpioDevicePanel::Source source)
+{
+    const auto panels = _panels; // copy: we mutate _panels in the loop
+    for (auto it = panels.cbegin(); it != panels.cend(); ++it)
+    {
+        GpioDevicePanel *panel = it.value();
+        if (panel->source != source)
+            continue;
+
+        if (panel->enabled)
+            panel->provider->setConfig(false, static_cast<uint8_t>(panel->cycleSpin->value()), panel->dirMask);
+
+        _panels.remove(it.key());
+        const int tabIdx = _tabs->indexOf(panel->container);
+        if (tabIdx >= 0)
+            _tabs->removeTab(tabIdx);
         panel->container->deleteLater();
+        delete panel->provider; // closes USB / joins poll thread (aiode) or disconnects (GrIP)
         delete panel;
     }
-    _panels.clear();
-
-    _rowLayout->addWidget(_placeholder);
-    _placeholder->setVisible(true);
 }
 
-void GpioControlWindow::buildDevicePanel(GrIPHandler *handler, const QString &deviceName)
+void GpioControlWindow::clearAllPanels()
 {
+    removePanels(GpioDevicePanel::Source::Grip);
+    removePanels(GpioDevicePanel::Source::Aiode);
+}
+
+void GpioControlWindow::updatePlaceholder()
+{
+    const bool empty = _panels.isEmpty();
+    _placeholder->setVisible(empty);
+    _tabs->setVisible(!empty);
+}
+
+/* -------------------------------------------------------------------------
+ * Panel construction
+ * ------------------------------------------------------------------------- */
+
+void GpioControlWindow::buildDevicePanel(GpioProvider *provider, GpioDevicePanel::Source source,
+                                         const QString &deviceName)
+{
+    const int pinCount    = std::min(16, std::max(0, provider->digitalPinCount()));
+    const int analogCount = provider->analogPinCount();
+
     auto *panel = new GpioDevicePanel{};
-    panel->handler = handler;
+    panel->provider = provider;
+    panel->source   = source;
 
-    auto *groupBox = new QGroupBox(deviceName, _rowContainer);
-    panel->container = groupBox;
-
-    auto *outerLayout = new QVBoxLayout(groupBox);
+    // Each device lives on its own scrollable tab page.
+    auto *page = new QWidget;
+    auto *outerLayout = new QVBoxLayout(page);
     outerLayout->setContentsMargins(6, 6, 6, 6);
     outerLayout->setSpacing(6);
 
     // --- Config bar ---
-    auto *cfgBar = new QWidget(groupBox);
+    auto *cfgBar = new QWidget(page);
     auto *cfgLayout = new QHBoxLayout(cfgBar);
     cfgLayout->setContentsMargins(0, 0, 0, 0);
     cfgLayout->setSpacing(6);
@@ -162,7 +225,7 @@ void GpioControlWindow::buildDevicePanel(GrIPHandler *handler, const QString &de
     outerLayout->addWidget(cfgBar);
 
     // --- Pin grid ---
-    auto *gridWidget = new QWidget(groupBox);
+    auto *gridWidget = new QWidget(page);
     auto *grid = new QGridLayout(gridWidget);
     grid->setContentsMargins(0, 0, 0, 0);
     grid->setSpacing(4);
@@ -175,14 +238,15 @@ void GpioControlWindow::buildDevicePanel(GrIPHandler *handler, const QString &de
         lbl->setStyleSheet("font-weight: bold;");
         grid->addWidget(lbl, 0, col++);
     };
+    const QString analogUnit = provider->analogUnit();
     makeHdr(tr("Pin"));
     makeHdr(tr("Direction"));
     makeHdr(tr("Digital"));
-    makeHdr(tr("Voltage (mV)"));
+    makeHdr(analogUnit.isEmpty() ? tr("Analog") : tr("Voltage (%1)").arg(analogUnit));
     makeHdr(tr("Output"));
 
     // Pin rows
-    for (int pin = 0; pin < 16; ++pin)
+    for (int pin = 0; pin < pinCount; ++pin)
     {
         const int row = pin + 1;
 
@@ -199,7 +263,7 @@ void GpioControlWindow::buildDevicePanel(GrIPHandler *handler, const QString &de
         digitalLbl->setAlignment(Qt::AlignCenter);
         grid->addWidget(digitalLbl, row, 2);
 
-        auto *voltLbl = new QLabel(pin < 8 ? QStringLiteral("--") : tr("N/A"), gridWidget);
+        auto *voltLbl = new QLabel(pin < analogCount ? QStringLiteral("--") : tr("N/A"), gridWidget);
         voltLbl->setAlignment(Qt::AlignCenter);
         grid->addWidget(voltLbl, row, 3);
 
@@ -225,19 +289,35 @@ void GpioControlWindow::buildDevicePanel(GrIPHandler *handler, const QString &de
     }
 
     outerLayout->addWidget(gridWidget);
-    _rowLayout->addWidget(groupBox);
+    outerLayout->addStretch(); // keep the grid top-aligned within the tab
+
+    auto *scroll = new QScrollArea;
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setWidget(page);
+
+    panel->container = scroll;
+    _tabs->addTab(scroll, deviceName);
 
     connect(panel->toggleBtn, &QPushButton::clicked, this,
             [this, panel]() { onToggleClicked(panel); });
 
-    connect(handler, &GrIPHandler::gpioUpdated, this,
+    // AiodeApi emits gpioUpdated from a bare std::thread, so force a queued
+    // delivery onto the GUI thread rather than relying on auto-connection
+    // inferring it from the (foreign) emitter thread.
+    connect(provider, &GpioProvider::gpioUpdated, this,
             [this, panel](uint16_t pinState, QVector<uint16_t> analogValues)
             {
                 onGpioUpdated(panel, pinState, analogValues);
-            });
+            },
+            Qt::QueuedConnection);
 
-    _panels.insert(handler, panel);
+    _panels.insert(provider, panel);
 }
+
+/* -------------------------------------------------------------------------
+ * Interaction
+ * ------------------------------------------------------------------------- */
 
 void GpioControlWindow::onToggleClicked(GpioDevicePanel *panel)
 {
@@ -260,7 +340,7 @@ void GpioControlWindow::onToggleClicked(GpioDevicePanel *panel)
     panel->cycleSpin->setEnabled(!panel->enabled);
     panel->toggleBtn->setText(panel->enabled ? tr("Disable") : tr("Enable"));
 
-    panel->handler->GpioSetConfig(
+    panel->provider->setConfig(
         panel->enabled,
         static_cast<uint8_t>(panel->cycleSpin->value()),
         panel->dirMask);
@@ -279,12 +359,15 @@ void GpioControlWindow::onOutputToggled(GpioDevicePanel *panel, int pin)
         ? QStringLiteral("color: #00cc00; font-weight: bold;")
         : QStringLiteral("color: #cc0000; font-weight: bold;"));
 
-    panel->handler->GpioSetOutput(panel->outputMask);
+    panel->provider->setOutput(panel->outputMask);
 }
 
 void GpioControlWindow::onGpioUpdated(GpioDevicePanel *panel, uint16_t pinState,
                                        const QVector<uint16_t> &analogValues)
 {
+    const int analogCount = panel->provider->analogPinCount();
+    const QString analogUnit = panel->provider->analogUnit();
+
     for (GpioPinRow &row : panel->pinRows)
     {
         const bool isOutput = (panel->dirMask >> row.pin) & 1u;
@@ -296,8 +379,10 @@ void GpioControlWindow::onGpioUpdated(GpioDevicePanel *panel, uint16_t pinState,
             ? QStringLiteral("color: #00cc00; font-weight: bold;")
             : QStringLiteral("color: #cc0000; font-weight: bold;"));
 
-        if (row.pin < 8 && row.pin < analogValues.size())
-            row.voltLbl->setText(QString::number(analogValues[row.pin]) + tr(" mV"));
+        if (row.pin < analogCount && row.pin < analogValues.size())
+            row.voltLbl->setText(analogUnit.isEmpty()
+                ? QString::number(analogValues[row.pin])
+                : QString::number(analogValues[row.pin]) + QStringLiteral(" ") + analogUnit);
 
         row.outputBtn->setVisible(isOutput);
     }

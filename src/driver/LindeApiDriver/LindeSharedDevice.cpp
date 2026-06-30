@@ -28,7 +28,7 @@ bool LindeSharedDevice::open()
     const ssize_t cnt = libusb_get_device_list(ctx, &list);
     if (cnt < 0)
     {
-        lastError = "libusb_get_device_list failed";
+        setLastError("libusb_get_device_list failed");
         libusb_exit(ctx);
         ctx = nullptr;
         return false;
@@ -49,7 +49,7 @@ bool LindeSharedDevice::open()
 
     if (!found)
     {
-        lastError = "device not found (VID/PID mismatch)";
+        setLastError("device not found (VID/PID mismatch)");
         libusb_free_device_list(list, 1);
         libusb_exit(ctx);
         ctx = nullptr;
@@ -108,7 +108,7 @@ bool LindeSharedDevice::open()
 
     if (!foundItf)
     {
-        lastError = "LIN interface (bInterfaceProtocol=0x01) not found";
+        setLastError("LIN interface (bInterfaceProtocol=0x01) not found");
         close();
         return false;
     }
@@ -119,7 +119,7 @@ bool LindeSharedDevice::open()
         rc = libusb_detach_kernel_driver(handle, itf);
         if (rc != 0)
         {
-            lastError = libusb_strerror(static_cast<libusb_error>(rc));
+            setLastError(libusb_strerror(static_cast<libusb_error>(rc)));
             close();
             return false;
         }
@@ -129,7 +129,7 @@ bool LindeSharedDevice::open()
     rc = libusb_claim_interface(handle, itf);
     if (rc != 0)
     {
-        lastError = libusb_strerror(static_cast<libusb_error>(rc));
+        setLastError(libusb_strerror(static_cast<libusb_error>(rc)));
         close();
         return false;
     }
@@ -143,7 +143,7 @@ bool LindeSharedDevice::open()
     channelCount = static_cast<uint8_t>(dcfg.icount + 1u);
     features     = dcfg.features;
 
-    lastError.clear();
+    setLastError(std::string());
     return true;
 }
 
@@ -209,6 +209,12 @@ void LindeSharedDevice::startReader()
 void LindeSharedDevice::stopReader()
 {
     readerRunning.store(false, std::memory_order_relaxed);
+    {
+        // Wake any BusListener thread blocked in readFrame() so it can observe
+        // the stopped state instead of waiting out its full deadline.
+        QMutexLocker lock(&queueMutex);
+        queueCond.wakeAll();
+    }
     if (readerThread.joinable())
         readerThread.join();
     QMutexLocker lock(&queueMutex);
@@ -242,6 +248,9 @@ bool LindeSharedDevice::readFrame(uint8_t channel, lin_usb_host_frame_t &frame, 
     const QDeadlineTimer deadline(timeout_ms);
     while (rxQueues[channel].isEmpty())
     {
+        // Bail out promptly if the reader has been stopped (e.g. on close).
+        if (!readerRunning.load(std::memory_order_relaxed))
+            return false;
         if (!queueCond.wait(&queueMutex, deadline))
             return false;
     }
@@ -261,7 +270,7 @@ bool LindeSharedDevice::sendFrame(const lin_usb_host_frame_t &frame)
                                   CTRL_TIMEOUT_MS);
     if (rc != 0)
     {
-        lastError = libusb_strerror(static_cast<libusb_error>(rc));
+        setLastError(libusb_strerror(static_cast<libusb_error>(rc)));
         return false;
     }
     return true;
@@ -271,13 +280,14 @@ bool LindeSharedDevice::sendFrame(const lin_usb_host_frame_t &frame)
 
 bool LindeSharedDevice::controlOut(uint8_t breq, uint16_t wValue, void *data, uint16_t len)
 {
+    QMutexLocker tx(&controlMutex);
     int rc = libusb_control_transfer(handle, BRT_VENDOR_ITF_OUT, breq,
                                      wValue, static_cast<uint16_t>(itf),
                                      static_cast<unsigned char *>(data), len,
                                      CTRL_TIMEOUT_MS);
     if (rc < 0)
     {
-        lastError = libusb_strerror(static_cast<libusb_error>(rc));
+        setLastError(libusb_strerror(static_cast<libusb_error>(rc)));
         return false;
     }
     return true;
@@ -285,16 +295,29 @@ bool LindeSharedDevice::controlOut(uint8_t breq, uint16_t wValue, void *data, ui
 
 bool LindeSharedDevice::controlIn(uint8_t breq, uint16_t wValue, void *data, uint16_t len)
 {
+    QMutexLocker tx(&controlMutex);
     int rc = libusb_control_transfer(handle, BRT_VENDOR_ITF_IN, breq,
                                      wValue, static_cast<uint16_t>(itf),
                                      static_cast<unsigned char *>(data), len,
                                      CTRL_TIMEOUT_MS);
     if (rc < 0)
     {
-        lastError = libusb_strerror(static_cast<libusb_error>(rc));
+        setLastError(libusb_strerror(static_cast<libusb_error>(rc)));
         return false;
     }
     return true;
+}
+
+void LindeSharedDevice::setLastError(const std::string &err)
+{
+    QMutexLocker lock(&errorMutex);
+    lastError = err;
+}
+
+std::string LindeSharedDevice::getLastError() const
+{
+    QMutexLocker lock(&errorMutex);
+    return lastError;
 }
 
 // ---- Per-channel protocol helpers ----
