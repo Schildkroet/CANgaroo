@@ -204,6 +204,24 @@ uint64_t BusMessage::extractRawSignal(uint16_t start_bit, uint16_t length, bool 
 {
     if (length == 0 || start_bit >= sizeof(_u8) * 8) return 0;
 
+    // Big-endian (Motorola) signals are numbered in physical transmission order
+    // (byte 0 first, MSB of each byte first) by the DBC parser's start-bit
+    // conversion, so walk the bits sequentially in that order. The previous
+    // shift+conditional-bswap64 approach only produced correct results for
+    // byte-aligned signal starts and silently returned wrong values (often 0)
+    // for signals starting mid-byte.
+    if (isBigEndian) {
+        uint64_t data = 0;
+        for (uint16_t i = 0; i < length; i++) {
+            uint32_t t = static_cast<uint32_t>(start_bit) + i;
+            uint32_t byte_idx = t / 8;
+            uint32_t bit_in_byte = 7 - (t % 8);
+            uint8_t bit = (byte_idx < sizeof(_u8)) ? ((_u8[byte_idx] >> bit_in_byte) & 1u) : 0u;
+            data = (data << 1) | bit;
+        }
+        return data;
+    }
+
     int byte_offset = start_bit / 8;
     int bit_shift = start_bit % 8;
 
@@ -225,15 +243,6 @@ uint64_t BusMessage::extractRawSignal(uint16_t start_bit, uint16_t length, bool 
     }
     data &= mask;
 
-    // If the length is greater than 8, we need to byteswap to preserve endianness
-    if (isBigEndian && (length > 8))
-    {
-        // Swap bytes
-        data = __builtin_bswap64(data);
-        // Shift out unused bits
-        data >>= 64 - length;
-    }
-
     return data;
 }
 
@@ -241,11 +250,29 @@ void BusMessage::injectRawSignal(uint16_t start_bit, uint16_t length, bool isBig
 {
     if (length == 0 || start_bit >= sizeof(_u8) * 8) return;
 
-    int byte_offset = start_bit / 8;
-    int bit_shift = start_bit % 8;
-
     uint64_t mask = (length < 64) ? ((1ULL << length) - 1ULL) : ~0ULL;
     value &= mask;
+
+    // Symmetric with extractRawSignal: walk the bits in physical transmission
+    // order (byte 0 first, MSB of each byte first) instead of shift+bswap64,
+    // which only worked for byte-aligned signal starts.
+    if (isBigEndian) {
+        for (uint16_t i = 0; i < length; i++) {
+            uint32_t t = static_cast<uint32_t>(start_bit) + i;
+            uint32_t byte_idx = t / 8;
+            uint32_t bit_in_byte = 7 - (t % 8);
+            if (byte_idx >= static_cast<uint32_t>(_dlc)) continue;
+            uint8_t bit = static_cast<uint8_t>((value >> (length - 1 - i)) & 1u);
+            if (bit)
+                _u8[byte_idx] |= static_cast<uint8_t>(1u << bit_in_byte);
+            else
+                _u8[byte_idx] &= static_cast<uint8_t>(~(1u << bit_in_byte));
+        }
+        return;
+    }
+
+    int byte_offset = start_bit / 8;
+    int bit_shift = start_bit % 8;
 
     uint8_t temp[8] = {0};
     int copy_len = static_cast<int>(sizeof(_u8)) - byte_offset;
@@ -257,14 +284,8 @@ void BusMessage::injectRawSignal(uint16_t start_bit, uint16_t length, bool isBig
     memcpy(&data_raw, temp, sizeof(data_raw));
     data_raw = le64toh(data_raw);
 
-    if (isBigEndian && (length > 8)) {
-        uint64_t to_inject = __builtin_bswap64(value << (64 - length));
-        data_raw &= ~(mask << bit_shift);
-        data_raw |= (to_inject & mask) << bit_shift;
-    } else {
-        data_raw &= ~(mask << bit_shift);
-        data_raw |= value << bit_shift;
-    }
+    data_raw &= ~(mask << bit_shift);
+    data_raw |= value << bit_shift;
 
     data_raw = htole64(data_raw);
     memcpy(temp, &data_raw, sizeof(data_raw));

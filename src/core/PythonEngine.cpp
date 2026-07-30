@@ -70,14 +70,27 @@ static void insertRawSignalIntoMsg(BusMessage &msg,
 {
     if (length == 0 || start_bit >= BusMessage::k_maxDataBytes * 8) { return; }
 
-    if (isBigEndian && length > 8)
+    if (isBigEndian)
     {
-        // Inverse of extractRawSignal's big-endian path:
-        //   extract: result = bswap64((data_raw >> bit_shift) & mask) >> (64 - length)
-        //   insert:  A      = bswap64(raw << (64 - length))
-        // where A is the Intel-order value to place at bit_shift in data_raw.
-        raw <<= (64 - length);
-        raw = __builtin_bswap64(raw);
+        // Big-endian (Motorola) signals are numbered in physical transmission
+        // order (byte 0 first, MSB of each byte first) by the DBC parser's
+        // start-bit conversion, so walk the bits sequentially in that order.
+        // This mirrors BusMessage::injectRawSignal's big-endian path.
+        for (uint16_t i = 0; i < length; i++)
+        {
+            uint32_t t = static_cast<uint32_t>(start_bit) + i;
+            uint32_t byte_idx = t / 8;
+            uint32_t bit_in_byte = 7 - (t % 8);
+            if (byte_idx >= BusMessage::k_maxDataBytes) { continue; }
+            uint8_t bit = static_cast<uint8_t>((raw >> (length - 1 - i)) & 1u);
+            uint8_t cur = msg.getByte(static_cast<uint8_t>(byte_idx));
+            if (bit)
+                cur = static_cast<uint8_t>(cur | (1u << bit_in_byte));
+            else
+                cur = static_cast<uint8_t>(cur & ~(1u << bit_in_byte));
+            msg.setByte(static_cast<uint8_t>(byte_idx), cur);
+        }
+        return;
     }
 
     const uint64_t mask       = (length < 64) ? ((1ULL << length) - 1) : ~0ULL;
