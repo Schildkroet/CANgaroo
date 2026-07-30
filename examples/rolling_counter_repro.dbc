@@ -1,0 +1,120 @@
+VERSION ""
+
+NS_ : 
+	NS_DESC_
+	CM_
+	BA_DEF_
+	BA_
+	VAL_
+	CAT_DEF_
+	CAT_
+	FILTER
+	BA_DEF_DEF_
+	EV_DATA_
+	ENVVAR_DATA_
+	SGTYPE_
+	SGTYPE_VAL_
+	BA_DEF_SGTYPE_
+	BA_SGTYPE_
+	SIG_TYPE_REF_
+	VAL_TABLE_
+	SIG_GROUP_
+	SIG_VALTYPE_
+	SIG_UNIT_
+	SG_MUL_VAL_
+
+BS_:
+
+BU_: ECU_A NODE_B NODE_C NODE_D NODE_E NODE_F NODE_G NODE_H NODE_I NODE_J NODE_K NODE_L NODE_M
+
+BO_ 256 TestMsg_A: 32 ECU_A
+ SG_ ChecksumByte : 7|8@0+ (1,0) [0|255] "" NODE_B,NODE_C,NODE_D
+ SG_ RollingCounter : 11|4@0+ (1,0) [0|14] "" NODE_B,NODE_C,NODE_D
+ SG_ StatusBits : 23|2@0+ (1,0) [0|2] "" NODE_B,NODE_C,NODE_E,NODE_F,NODE_D
+ SG_ Field_21 : 21|3@0+ (1,0) [0|7] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_18 : 18|3@0+ (1,0) [0|7] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_31 : 31|3@0+ (1,0) [0|7] "" NODE_B,NODE_C,NODE_E,NODE_F,NODE_G,NODE_H,NODE_I,NODE_D,NODE_J,NODE_K
+ SG_ Field_28 : 28|3@0+ (1,0) [0|7] "" NODE_B,NODE_C,NODE_E,NODE_F,NODE_G,NODE_H,NODE_I,NODE_D,NODE_J,NODE_K,NODE_L,NODE_M
+ SG_ Field_25 : 25|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_39 : 39|32@0+ (1,0) [0|4.294967295E9] "" NODE_B,NODE_C,NODE_E,NODE_D
+ SG_ Field_71 : 71|32@0+ (1,0) [0|4.294967295E9] "" NODE_B,NODE_C,NODE_E,NODE_D
+ SG_ Field_103 : 103|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_102 : 102|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_101 : 101|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_E,NODE_F,NODE_G,NODE_D,NODE_J
+ SG_ Field_100 : 100|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_99 : 99|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_98 : 98|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_97 : 97|2@0+ (1,0) [0|3] "" NODE_B,NODE_C,NODE_G,NODE_D,NODE_J
+ SG_ Field_110 : 110|7@0+ (1,0) [0|100] "%" NODE_B,NODE_C,NODE_F,NODE_G,NODE_D,NODE_L,NODE_M
+ SG_ Field_118 : 118|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_117 : 117|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_116 : 116|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_D,NODE_J,NODE_K
+ SG_ Field_115 : 115|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_F,NODE_D
+ SG_ Field_114 : 114|2@0+ (1,0) [0|3] "" NODE_B,NODE_C,NODE_E,NODE_F,NODE_G,NODE_D
+ SG_ Field_112 : 112|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_127 : 127|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_126 : 126|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_125 : 125|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_124 : 124|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_123 : 123|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_122 : 122|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_121 : 121|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_120 : 120|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_135 : 135|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_134 : 134|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_133 : 133|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_132 : 132|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_131 : 131|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_130 : 130|2@0+ (1,0) [0|3] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_128 : 128|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_143 : 143|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_142 : 142|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_141 : 141|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_140 : 140|2@0+ (1,0) [0|3] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_138 : 138|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_E,NODE_G,NODE_D,NODE_J
+ SG_ Field_137 : 137|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_136 : 136|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_159 : 159|2@0+ (1,0) [0|3] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_157 : 157|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_E,NODE_F,NODE_G,NODE_D
+ SG_ Field_156 : 156|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_155 : 155|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_E,NODE_D
+ SG_ Field_154 : 154|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_E,NODE_D
+ SG_ Field_153 : 153|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_E,NODE_D
+ SG_ Field_152 : 152|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_E,NODE_D
+ SG_ Field_167 : 167|2@0+ (1,0) [0|3] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_165 : 165|2@0+ (1,0) [0|3] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_163 : 163|4@0+ (1,0) [0|7] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_175 : 175|4@0+ (1,0) [0|7] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_171 : 171|4@0+ (1,0) [0|7] "" NODE_B,NODE_C,NODE_E,NODE_D
+ SG_ Field_183 : 183|4@0+ (1,0) [0|7] "" NODE_B,NODE_C,NODE_E,NODE_D
+ SG_ Field_179 : 179|4@0+ (1,0) [0|7] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_191 : 191|4@0+ (1,0) [0|7] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_187 : 187|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_185 : 185|2@0+ (1,0) [0|3] "" NODE_B,NODE_C,NODE_E,NODE_D
+ SG_ Field_207 : 207|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_206 : 206|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_E,NODE_F,NODE_D
+ SG_ Field_215 : 215|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_214 : 214|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_223 : 223|1@0+ (1,0) [0|1] "" NODE_B,NODE_C,NODE_E,NODE_G,NODE_D
+ SG_ Field_205 : 205|2@0+ (1,0) [0|3] "" NODE_B,NODE_C,NODE_D
+ SG_ Field_200 : 200|1@0+ (1,0) [0|1] "" NODE_B,NODE_D
+ SG_ Field_201 : 201|1@0+ (1,0) [0|1] "" NODE_B,NODE_D
+ SG_ Field_202 : 202|1@0+ (1,0) [0|1] "" NODE_B,NODE_D
+ SG_ Field_203 : 203|1@0+ (1,0) [0|1] "" NODE_B,NODE_D
+ SG_ Field_222 : 222|1@0+ (1,0) [0|1] "" NODE_C,NODE_D
+ SG_ Field_24 : 24|1@0+ (1,0) [0|1] "" NODE_B,NODE_D
+ SG_ Field_213 : 213|3@0+ (1,0) [0|7] "" NODE_E,NODE_F,NODE_G,NODE_D
+ SG_ Field_210 : 210|3@0+ (1,0) [0|7] "" NODE_B,NODE_D
+ SG_ Field_111 : 111|1@0+ (1,0) [0|1] "" NODE_C,NODE_D
+ SG_ Field_221 : 221|4@0+ (1,0) [0|15] "" NODE_D
+ SG_ Field_217 : 217|2@0+ (1,0) [0|3] "" NODE_D
+ SG_ Field_151 : 151|4@0+ (1,0) [0|15] "" NODE_D
+ SG_ Field_186 : 186|1@0+ (1,0) [0|1] "" NODE_D
+ SG_ Field_119 : 119|1@0+ (1,0) [0|1] "" NODE_D
+ SG_ Field_147 : 147|3@0+ (1,0) [0|7] "" NODE_B,NODE_C,NODE_F,NODE_G,NODE_D
+ SG_ Field_199 : 199|8@0+ (0.4,0) [0|100] "%" NODE_D
+
+CM_ BO_ 256 "Minimal reproduction of a big-endian (Motorola) rolling-counter decoding bug. RollingCounter is a 4-bit nibble starting mid-byte (bit 11) and must increment 0..14 each frame. All other signals mirror the exact bit layout of the original reported message (renamed/anonymized), so the DBC parses and packs the full 32-byte frame exactly as in the field.";
+CM_ SG_ 256 ChecksumByte "Byte-aligned 8-bit checksum/status byte, used as a sanity check that basic decoding still works.";
+CM_ SG_ 256 RollingCounter "Rolling counter. Occupies the low nibble of byte 1 (bits 11..8). Must be seen incrementing 0,1,2,...,14,0,1,... when replaying rolling_counter_repro.py.";
+CM_ SG_ 256 StatusBits "Unrelated 2-bit signal kept to make sure neighbouring signals aren't disturbed by the fix.";
