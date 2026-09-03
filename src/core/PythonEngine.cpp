@@ -1003,6 +1003,10 @@ void PythonEngine::runScript(const QString &code)
         QMutexLocker lck(&_msgQueueMutex);
         _msgQueue.clear();
     }
+    {
+        QMutexLocker lck(&_inputQueueMutex);
+        _inputQueue.clear();
+    }
 
     emit scriptStarted();
 
@@ -1018,6 +1022,7 @@ void PythonEngine::stopScript()
 {
     _stopRequested = true;
     _msgQueueCondition.wakeAll();
+    _inputQueueCondition.wakeAll();
 
     stopAllPeriodicTasks();
 
@@ -1026,6 +1031,7 @@ void PythonEngine::stopScript()
     for (int i = 0; i < 50 && _running; i++)
     {
         _msgQueueCondition.wakeAll();
+        _inputQueueCondition.wakeAll();
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
@@ -1079,6 +1085,27 @@ void PythonEngine::enqueueMessage(const BusMessage &msg)
         _msgQueue.enqueue(msg);
         _msgQueueCondition.wakeOne();
     }
+}
+
+void PythonEngine::enqueueInput(const QString &text)
+{
+    if (!_running) { return; }
+
+    QMutexLocker lck(&_inputQueueMutex);
+    _inputQueue.enqueue(text.endsWith('\n') ? text : text + '\n');
+    _inputQueueCondition.wakeOne();
+}
+
+std::string PythonEngine::readInputLine()
+{
+    QMutexLocker lck(&_inputQueueMutex);
+    while (_inputQueue.isEmpty() && !_stopRequested.load())
+    {
+        _inputQueueCondition.wait(&_inputQueueMutex);
+    }
+
+    if (_stopRequested.load()) { return {}; }
+    return _inputQueue.dequeue().toUtf8().toStdString();
 }
 
 // ---------------------------------------------------------------------------
@@ -1212,7 +1239,12 @@ void PythonEngine::workerFunc(std::string code)
         globals["_cangaroo_stop_check"] = py::cpp_function(
             [this]() -> bool { return _stopRequested.load(); });
 
+        globals["_cangaroo_input"] = py::cpp_function(
+            [this]() -> std::string { return readInputLine(); },
+            py::call_guard<py::gil_scoped_release>());
+
         py::exec(R"(
+import io
 import sys
 
 class _SignalWriter:
@@ -1226,6 +1258,27 @@ class _SignalWriter:
 
 sys.stdout = _SignalWriter(False)
 sys.stderr = _SignalWriter(True)
+
+class _SignalReader(io.TextIOBase):
+    def __init__(self):
+        super().__init__()
+        self._buffer = ""
+    def readline(self, size=-1):
+        if not self._buffer:
+            self._buffer = _cangaroo_input()
+            if not self._buffer and _cangaroo_stop_check():
+                raise KeyboardInterrupt("Script stopped by user")
+        if size is None or size < 0:
+            line, self._buffer = self._buffer, ""
+            return line
+        line, self._buffer = self._buffer[:size], self._buffer[size:]
+        return line
+    def readable(self):
+        return True
+    def isatty(self):
+        return True
+
+sys.stdin = _SignalReader()
 )");
 
         py::exec(R"(

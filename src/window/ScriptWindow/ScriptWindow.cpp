@@ -92,12 +92,18 @@ ScriptWindow::ScriptWindow(QWidget *parent, Backend &backend)
     _console->setReadOnly(true);
     _console->setPlaceholderText(tr("Script output..."));
 
+    _input = new QLineEdit(this);
+    _input->setFont(mono);
+    _input->setPlaceholderText(tr("Script input (press Enter to send)..."));
+    _input->setEnabled(false);
+
     _splitter->addWidget(_editor);
     _splitter->addWidget(_console);
     _splitter->setStretchFactor(0, 3);
     _splitter->setStretchFactor(1, 1);
 
     mainLayout->addWidget(_splitter);
+    mainLayout->addWidget(_input);
 
     // Connections
     connect(_btnRun,   &QPushButton::clicked, this, &ScriptWindow::onRunClicked);
@@ -105,6 +111,7 @@ ScriptWindow::ScriptWindow(QWidget *parent, Backend &backend)
     connect(_btnClear, &QPushButton::clicked, this, &ScriptWindow::onClearClicked);
     connect(_btnLoad,  &QPushButton::clicked, this, &ScriptWindow::onLoadClicked);
     connect(_btnSave,  &QPushButton::clicked, this, &ScriptWindow::onSaveClicked);
+    connect(_input, &QLineEdit::returnPressed, this, &ScriptWindow::onInputSubmitted);
     connect(_chkAutoRun, &QCheckBox::toggled, this, [this]() { emit settingsChanged(this); });
 
     connect(_engine, &PythonEngine::scriptOutput,   this, &ScriptWindow::onScriptOutput, Qt::QueuedConnection);
@@ -146,6 +153,7 @@ void ScriptWindow::retranslateUi()
     _btnSave->setText(tr("Save"));
     _chkAutoRun->setText(tr("AutoRun"));
     _chkAutoRun->setToolTip(tr("Start script with measurement"));
+    _input->setPlaceholderText(tr("Script input (press Enter to send)..."));
 }
 
 void ScriptWindow::onRunClicked()
@@ -215,6 +223,19 @@ void ScriptWindow::onSaveClicked()
     }
 }
 
+void ScriptWindow::onInputSubmitted()
+{
+    if (!_engine->isRunning()) { return; }
+
+    const QString text = _input->text();
+    _console->moveCursor(QTextCursor::End);
+    _console->insertPlainText(QStringLiteral("> ") + text + QStringLiteral("\n"));
+    _console->moveCursor(QTextCursor::End);
+    _engine->enqueueInput(text);
+    _input->clear();
+    _input->setFocus();
+}
+
 void ScriptWindow::onScriptOutput(const QString &text)
 {
     _console->moveCursor(QTextCursor::End);
@@ -239,6 +260,7 @@ void ScriptWindow::onScriptStarted()
     _btnRun->setEnabled(false);
     _btnStop->setEnabled(true);
     _editor->setReadOnly(true);
+    _input->setEnabled(true);
 }
 
 void ScriptWindow::onScriptFinished()
@@ -247,6 +269,8 @@ void ScriptWindow::onScriptFinished()
     _btnRun->setEnabled(true);
     _btnStop->setEnabled(false);
     _editor->setReadOnly(false);
+    _input->clear();
+    _input->setEnabled(false);
 }
 
 void ScriptWindow::onMeasurementStarted()

@@ -50,6 +50,7 @@ private slots:
     void onClearClicked();
     void onLoadClicked();
     void onSaveClicked();
+    void onInputSubmitted();
     void onScriptOutput(const QString &text);
     void onScriptError(const QString &text);
     void onScriptStarted();
@@ -64,6 +65,7 @@ private:
     QSplitter *_splitter;
     QPlainTextEdit *_editor;
     QPlainTextEdit *_console;
+    QLineEdit *_input;
     QPushButton *_btnRun;
     QPushButton *_btnStop;
     QPushButton *_btnClear;

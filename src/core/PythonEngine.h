@@ -48,6 +48,7 @@ public:
     Backend &backend() { return _backend; }
 
     void enqueueMessage(const BusMessage &msg);
+    void enqueueInput(const QString &text);
 
     QMutex &msgQueueMutex() { return _msgQueueMutex; }
     QWaitCondition &msgQueueCondition() { return _msgQueueCondition; }
@@ -88,6 +89,10 @@ private:
     QWaitCondition _msgQueueCondition;
     QQueue<BusMessage> _msgQueue;
 
+    QMutex _inputQueueMutex;
+    QWaitCondition _inputQueueCondition;
+    QQueue<QString> _inputQueue;
+
     // RX filter state
     struct RxFilter
     {
@@ -117,5 +122,6 @@ private:
     int _nextHandle{0};
 
     void workerFunc(std::string code);
+    std::string readInputLine();
     void waitForOrphanedThreadAndSelfDestruct(std::thread worker);
 };
