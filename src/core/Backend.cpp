@@ -27,6 +27,7 @@
 #include <QFileInfo>
 
 #include "core/BusTrace.h"
+#include "core/TraceRecorder.h"
 #include "core/MeasurementSetup.h"
 #include "core/MeasurementNetwork.h"
 #include "core/MeasurementInterface.h"
@@ -50,6 +51,10 @@ Backend::Backend()
     setDefaultSetup();
     _trace = new BusTrace(*this, this, 50);
     _conditionalLoggingManager = new ConditionalLoggingManager(*this, this);
+    _traceRecorder = new TraceRecorder(
+        [this](BusInterfaceId id) { return getInterfaceName(id); },
+        [this]() { return isMeasurementRunning(); },
+        this);
 
     connect(_trace, &BusTrace::messageEnqueued, this, &Backend::onMessageEnqueued);
     connect(&_setup, &MeasurementSetup::onSetupChanged, this, &Backend::onSetupChanged);
@@ -100,6 +105,9 @@ bool Backend::startMeasurement()
     _measurementStartTime = QDateTime::currentMSecsSinceEpoch();
     _timerSinceStart.start();
 
+    // Before the listeners start, so the recording includes the first frames.
+    _traceRecorder->onMeasurementStarting();
+
     for (auto *network : _setup.getNetworks()) {
         for (auto *mi : network->interfaces()) {
 
@@ -136,6 +144,9 @@ bool Backend::stopMeasurement()
 
         qDeleteAll(_listeners);
         _listeners.clear();
+
+        // Listeners are joined, so every frame has reached the recorder.
+        _traceRecorder->onMeasurementStopped();
 
         log_info(tr("Measurement stopped"));
 

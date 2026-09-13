@@ -54,14 +54,8 @@ public:
     void enqueueMessage(const BusMessage &msg, bool more_to_follow=false);
     void setMaxSize(int maxSize);
 
-    // Dispatches to the writer for `format`.
+    // Writes the whole trace in `format`; see core/TraceFileWriter.
     void save(QFile &file, TraceFileFormat format);
-
-    void saveCanDump(QFile &file);
-    void saveVectorAsc(QFile &file);
-    void saveVectorMdf(QFile &file);
-    void savePcap(QFile &file);
-    void savePcapNg(QFile &file);
 
     bool getMuxedSignalFromCache(const CanDbSignal *signal, uint64_t *raw_value);
 
@@ -91,6 +85,7 @@ private:
     int _newRows;
     int _maxSize;
     bool _isTimerRunning;
+    bool _pruneWarned = false;
 
     QMap<const CanDbSignal*,uint64_t> _muxCache;
 

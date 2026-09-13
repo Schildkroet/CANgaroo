@@ -31,6 +31,37 @@ jobs:
         # "check" is provided by qmake's testcase config and runs every binary.
         make check
 
+  format-compat:
+    name: Trace format compatibility (python-can, scapy, asammdf)
+    runs-on: ubuntu-24.04
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v6
+
+    - name: Install dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y build-essential qt6-base-dev python3-venv
+
+    - name: Install reference readers
+      run: |
+        python3 -m venv .venv
+        .venv/bin/pip install -r tests/format_compat/requirements.txt
+
+    - name: Build sample writer
+      run: |
+        cd tests/format_compat
+        qmake6
+        make -j$(nproc)
+
+    - name: Write samples and read them back
+      run: |
+        # Every export format and split recorder output, checked by readers that
+        # share no code with cangaroo. See tests/format_compat/validate.py.
+        build/tests/trace_format_samples build/format_compat
+        .venv/bin/python tests/format_compat/validate.py build/format_compat
+
   build-ubuntu:
     name: Build CANgaroo DEB (Ubuntu / Qt6)
     runs-on: ubuntu-24.04

@@ -155,6 +155,17 @@ SettingsDialog::SettingsDialog(QSettings &settings, QActionGroup *languageGroup,
     m_saveFormatCombo->setCurrentIndex(fmtIdx >= 0 ? fmtIdx : 0);
     formTrace->addRow(tr("Preferred save format:"), m_saveFormatCombo);
 
+    m_maxTraceSizeSpin = new QSpinBox(grpTrace);
+    m_maxTraceSizeSpin->setRange(1000, 10000000);
+    m_maxTraceSizeSpin->setSingleStep(10000);
+    m_maxTraceSizeSpin->setGroupSeparatorShown(true);
+    m_maxTraceSizeSpin->setSuffix(tr(" messages"));
+    m_maxTraceSizeSpin->setToolTip(tr("Maximum number of messages kept in memory. When exceeded, the "
+                                      "oldest messages are discarded and are missing from saved traces. "
+                                      "Larger values use more memory."));
+    m_maxTraceSizeSpin->setValue(settings.value("trace/maxSize", 50000).toInt());
+    formTrace->addRow(tr("Max trace size:"), m_maxTraceSizeSpin);
+
     mainLayout->addWidget(grpTrace);
 
     // ── Decoders ──────────────────────────────────────────────────────────────
@@ -234,4 +245,9 @@ int SettingsDialog::defaultTimestampMode() const
 bool SettingsDialog::dataAsciiModeEnabled() const
 {
     return m_dataDisplayCombo->currentData().toInt() == 1;
+}
+
+int SettingsDialog::maxTraceSize() const
+{
+    return m_maxTraceSizeSpin->value();
 }

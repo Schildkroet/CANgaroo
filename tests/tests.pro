@@ -9,6 +9,10 @@ SUBDIRS += \
     dbc_parser \
     can_db \
     trace_file_format \
+    trace_line_format \
+    pcapng_format \
+    trace_file_writer \
+    trace_recorder \
     decoders \
     autosar_e2e \
     ldf_parser \

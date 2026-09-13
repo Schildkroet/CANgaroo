@@ -44,6 +44,7 @@ class CanDbMessage;
 class LinFrame;
 class SetupDialog;
 class LogModel;
+class TraceRecorder;
 
 class Backend : public QObject
 {
@@ -79,6 +80,7 @@ public:
     void clearTrace();
 
     ConditionalLoggingManager *getConditionalLoggingManager() const { return _conditionalLoggingManager; }
+    TraceRecorder *getTraceRecorder() const { return _traceRecorder; }
 
     CanDbMessage *findDbMessage(const BusMessage &msg) const;
     LinFrame     *findLinFrame(const BusMessage &msg) const;
@@ -130,4 +132,5 @@ private:
 
     LogModel *_logModel;
     ConditionalLoggingManager *_conditionalLoggingManager;
+    TraceRecorder *_traceRecorder = nullptr;
 };

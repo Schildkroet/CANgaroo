@@ -35,11 +35,13 @@ macx:OBJECTS_DIR = ../build/o/mac
 SOURCES += main.cpp\
     mainwindow.cpp \
     window/ConditionalLoggingDialog.cpp \
-    window/SettingsDialog.cpp
+    window/SettingsDialog.cpp \
+    window/RecordingDialog.cpp
 
 HEADERS  += mainwindow.h \
     window/ConditionalLoggingDialog.h \
-    window/SettingsDialog.h
+    window/SettingsDialog.h \
+    window/RecordingDialog.h
 
 FORMS    += mainwindow.ui
 

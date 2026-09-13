@@ -19,6 +19,10 @@ SOURCES += \
     $$PWD/Log.cpp \
     $$PWD/ThemeManager.cpp \
     $$PWD/ConditionalLoggingManager.cpp \
+    $$PWD/TraceLineFormat.cpp \
+    $$PWD/PcapNgFormat.cpp \
+    $$PWD/TraceFileWriter.cpp \
+    $$PWD/TraceRecorder.cpp \
     $$PWD/PythonEngine.cpp
 
 HEADERS += \
@@ -41,5 +45,10 @@ HEADERS += \
     $$PWD/Log.h \
     $$PWD/ThemeManager.h \
     $$PWD/ConditionalLoggingManager.h \
+    $$PWD/TraceLineFormat.h \
+    $$PWD/PcapNgFormat.h \
+    $$PWD/TraceFileWriter.h \
+    $$PWD/SocketCan.h \
+    $$PWD/TraceRecorder.h \
     $$PWD/PythonEngine.h
     $$PWD/TraceFileFormat.h

@@ -1,0 +1,5 @@
+# Independent reference readers used by validate.py. Pinned so a reader update
+# cannot silently change what counts as compatible.
+python-can==4.6.1
+scapy==2.7.0
+asammdf==8.8.27

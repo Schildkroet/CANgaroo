@@ -36,6 +36,10 @@
 #include <QActionGroup>
 #include <QEvent>
 #include <QFileInfo>
+#include <QToolButton>
+#include <QDesktopServices>
+#include <QStandardPaths>
+#include <QUrl>
 
 #include "core/MeasurementSetup.h"
 #include "core/MeasurementNetwork.h"
@@ -43,6 +47,7 @@
 #include "core/Backend.h"
 #include "core/BusTrace.h"
 #include "core/ThemeManager.h"
+#include "core/TraceRecorder.h"
 #include "window/TraceWindow/TraceWindow.h"
 #include "window/SetupDialog/SetupDialog.h"
 #include "window/LogWindow/LogWindow.h"
@@ -56,6 +61,7 @@
 #include "window/GpioControlWindow/GpioControlWindow.h"
 #include "window/GatewayWindow/GatewayWindow.h"
 #include "window/SettingsDialog.h"
+#include "window/RecordingDialog.h"
 #include "helpers/apphelpers.h"
 
 #include "driver/SLCANDriver/SLCANDriver.h"
@@ -211,6 +217,8 @@ void MainWindow::initActions()
     };
     connect(&backend(), &Backend::onSetupChanged, this, updateGatewayButton);
     updateGatewayButton();
+
+    initRecording();
 }
 
 void MainWindow::initDrivers()
@@ -339,6 +347,9 @@ void MainWindow::initAppearance()
     const int savedFontSize = settings.value("ui/fontSize", 6).toInt();
     if (savedFontSize > 6)
         applyFontSize(savedFontSize);
+
+    // Load saved trace size limit.
+    backend().getTrace()->setMaxSize(settings.value("trace/maxSize", 50000).toInt());
 }
 
 void MainWindow::applyCurrentTheme()
@@ -551,6 +562,156 @@ void MainWindow::updateMeasurementActions()
     ui->btnStartMeasurement->setEnabled(!running);
     ui->btnSetupMeasurement->setEnabled(!running);
     ui->btnStopMeasurement->setEnabled(running);
+}
+
+static RecordingConfig loadRecordingConfig(QSettings &settings)
+{
+    const RecordingConfig defaults;
+    const QString defaultFolder = QDir(QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation))
+                                      .filePath(QStringLiteral("CANgaroo"));
+
+    auto format = traceFormatFromName(settings.value("recording/format", traceFormatName(defaults.format)).toString())
+                      .value_or(defaults.format);
+    if (!TraceRecorder::isFormatSupported(format))
+        format = defaults.format;
+
+    return RecordingConfig{
+        .folder = settings.value("recording/folder", defaultFolder).toString(),
+        .fileNamePattern = settings.value("recording/fileNamePattern", defaults.fileNamePattern).toString(),
+        .format = format,
+        .splitSizeMb = settings.value("recording/splitSizeMb", defaults.splitSizeMb).toInt(),
+        .stayArmed = settings.value("recording/stayArmed", defaults.stayArmed).toBool(),
+    };
+}
+
+static void saveRecordingConfig(QSettings &settings, const RecordingConfig &config)
+{
+    settings.setValue("recording/folder", config.folder);
+    settings.setValue("recording/fileNamePattern", config.fileNamePattern);
+    settings.setValue("recording/format", traceFormatName(config.format));
+    settings.setValue("recording/splitSizeMb", config.splitSizeMb);
+    settings.setValue("recording/stayArmed", config.stayArmed);
+}
+
+void MainWindow::initRecording()
+{
+    TraceRecorder *recorder = backend().getTraceRecorder();
+    recorder->setConfig(loadRecordingConfig(settings));
+
+    _actionRecord = new QAction(tr("&Record Trace to File"), this);
+    _actionRecord->setCheckable(true);
+    _actionRecord->setShortcut(QKeySequence(QStringLiteral("Ctrl+R")));
+    _actionRecord->setIconText(tr("Record"));
+    _actionRecord->setToolTip(tr("Continuously record all traffic to a file (Ctrl+R)"));
+    _actionRecord->setIcon(QIcon::fromTheme(QStringLiteral("media-record")));
+
+    auto *actionRecordOptions = new QAction(tr("Recording &Options..."), this);
+    auto *actionOpenFolder = new QAction(tr("Open Recording &Folder"), this);
+
+    ui->menuMeasurement->insertAction(ui->actionSetup, _actionRecord);
+    ui->menuMeasurement->insertAction(ui->actionSetup, actionRecordOptions);
+    ui->menuMeasurement->insertSeparator(ui->actionSetup);
+
+    auto *recordMenu = new QMenu(this);
+    recordMenu->addAction(actionRecordOptions);
+    recordMenu->addAction(actionOpenFolder);
+
+    _btnRecord = new QToolButton(this);
+    _btnRecord->setDefaultAction(_actionRecord);
+    _btnRecord->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    _btnRecord->setPopupMode(QToolButton::MenuButtonPopup);
+    _btnRecord->setMenu(recordMenu);
+    _btnRecord->setCursor(Qt::PointingHandCursor);
+    _btnRecord->setStyleSheet(QStringLiteral(
+        "QToolButton:checked { background-color: #c62828; color: white; font-weight: bold;"
+        " border: none; border-radius: 4px; padding: 3px 6px; }"));
+
+    _recordStatusLabel = new QLabel(this);
+    _recordStatusLabel->setVisible(false);
+
+    // Controls layout: Start, Stop, spacer, Setup, Graph, Gateway, [here], stretch
+    ui->horizontalLayoutControls->insertSpacing(6, 30);
+    ui->horizontalLayoutControls->insertWidget(7, _btnRecord);
+    ui->horizontalLayoutControls->insertWidget(8, _recordStatusLabel);
+
+    _recordStatusTimer = new QTimer(this);
+    _recordStatusTimer->setInterval(1000);
+
+    connect(_actionRecord, &QAction::toggled, recorder, &TraceRecorder::setArmed);
+    connect(recorder, &TraceRecorder::armedChanged, this, [this](bool armed)
+    {
+        _actionRecord->setChecked(armed);
+        updateRecordingStatus();
+    });
+    connect(recorder, &TraceRecorder::recordingStarted, this, [this]()
+    {
+        _recordStatusTimer->start();
+        updateRecordingStatus();
+    });
+    connect(recorder, &TraceRecorder::recordingStopped, this, [this]()
+    {
+        _recordStatusTimer->stop();
+        updateRecordingStatus();
+    });
+    connect(recorder, &TraceRecorder::fileRotated, this, &MainWindow::updateRecordingStatus);
+    connect(_recordStatusTimer, &QTimer::timeout, this, &MainWindow::updateRecordingStatus);
+
+    connect(actionRecordOptions, &QAction::triggered, this, &MainWindow::showRecordingDialog);
+    connect(actionOpenFolder, &QAction::triggered, this, [recorder]()
+    {
+        const QString folder = recorder->config().folder;
+        QDir().mkpath(folder);
+        QDesktopServices::openUrl(QUrl::fromLocalFile(folder));
+    });
+
+    updateRecordingStatus();
+}
+
+void MainWindow::showRecordingDialog()
+{
+    TraceRecorder *recorder = backend().getTraceRecorder();
+    RecordingDialog dlg(recorder->config(), this);
+    if (dlg.exec() != QDialog::Accepted)
+        return;
+
+    const RecordingConfig config = dlg.config();
+    saveRecordingConfig(settings, config);
+    recorder->setConfig(config);
+}
+
+void MainWindow::updateRecordingStatus()
+{
+    const TraceRecorder *recorder = backend().getTraceRecorder();
+
+    if (recorder->isRecording())
+    {
+        const qint64 secs = std::max<qint64>(0, recorder->recordingStartTime().secsTo(QDateTime::currentDateTime()));
+        const QString elapsed = QStringLiteral("%1:%2:%3")
+                                    .arg(secs / 3600, 2, 10, QLatin1Char('0'))
+                                    .arg((secs / 60) % 60, 2, 10, QLatin1Char('0'))
+                                    .arg(secs % 60, 2, 10, QLatin1Char('0'));
+
+        _recordStatusLabel->setText(tr("● REC  %1  ·  %2  ·  %3")
+                                        .arg(QFileInfo(recorder->currentFilePath()).fileName(),
+                                             locale().formattedDataSize(recorder->totalBytesWritten()),
+                                             elapsed));
+        _recordStatusLabel->setToolTip(tr("%1\n%2 frames written")
+                                           .arg(QDir::toNativeSeparators(recorder->currentFilePath()))
+                                           .arg(recorder->framesWritten()));
+        _recordStatusLabel->setStyleSheet(QStringLiteral("QLabel { color: #c62828; font-weight: bold; }"));
+        _recordStatusLabel->setVisible(true);
+    }
+    else if (recorder->isArmed())
+    {
+        _recordStatusLabel->setText(tr("Recording armed, starts with measurement"));
+        _recordStatusLabel->setToolTip(QDir::toNativeSeparators(recorder->config().folder));
+        _recordStatusLabel->setStyleSheet(QString());
+        _recordStatusLabel->setVisible(true);
+    }
+    else
+    {
+        _recordStatusLabel->setVisible(false);
+    }
 }
 
 Backend &MainWindow::backend()
@@ -1474,6 +1635,10 @@ void MainWindow::showSettingsDialog()
     // on already-open trace windows, not just new ones.
     settings.setValue("tracewindow/dataAsciiMode", dlg.dataAsciiModeEnabled());
     backend().notifyDisplayConfigChanged();
+
+    // Apply trace size limit.
+    settings.setValue("trace/maxSize", dlg.maxTraceSize());
+    backend().getTrace()->setMaxSize(dlg.maxTraceSize());
 }
 
 #if defined(_WIN32)

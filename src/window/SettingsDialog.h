@@ -46,6 +46,7 @@ public:
     int defaultTraceViewMode() const;
     int defaultTimestampMode() const;
     bool dataAsciiModeEnabled() const;
+    int maxTraceSize() const;
 
 private:
     QComboBox *m_themeCombo;
@@ -60,4 +61,5 @@ private:
     QCheckBox *m_uds29BitCheck;
     QCheckBox *m_skipSaveWorkspacePromptCheck;
     QSpinBox *m_fontSizeSpin;
+    QSpinBox *m_maxTraceSizeSpin;
 };

@@ -131,6 +131,11 @@ private:
     void initGeometry();
     void initWorkspace();
     void initAppearance();
+    void initRecording();
+
+    // Continuous trace recording
+    void showRecordingDialog();
+    void updateRecordingStatus();
 
     // Theming helpers
     void applyCurrentTheme();
@@ -166,6 +171,11 @@ private:
 
     // Toolbar button whose icon has to be recolored on every theme change.
     class QPushButton *_btnOpenGraph = nullptr;
+
+    QAction *_actionRecord = nullptr;
+    class QToolButton *_btnRecord = nullptr;
+    class QLabel *_recordStatusLabel = nullptr;
+    class QTimer *_recordStatusTimer = nullptr;
 
     // Recent files
     static constexpr int MaxRecentFiles = 8;

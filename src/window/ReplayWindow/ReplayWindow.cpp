@@ -45,6 +45,7 @@
 #include "core/BusTrace.h"
 #include "core/Backend.h"
 #include "core/DBC/CanDbMessage.h"
+#include "core/TraceLineFormat.h"
 #include "driver/BusInterface.h"
 
 
@@ -429,64 +430,19 @@ bool ReplayWindow::parseVectorAsc(QFile &file)
             continue;
         }
 
-        // CANFD format: timestamp CANFD channel Rx/Tx ID flags 0 0 DLC DataLength data...
+        // CAN FD: timestamp CANFD channel Rx/Tx ID ... -- Vector layout as well as
+        // the one older cangaroo versions wrote.
         if (parts[1].compare("CANFD", Qt::CaseInsensitive) == 0)
         {
-            if (parts.size() < 10)
-            {
-                continue;
-            }
-
-            QString channel = parts[2];
-            QString dir = parts[3];
-            QString idStr = parts[4];
-            bool extended = idStr.endsWith('x') || idStr.endsWith('X');
-            if (extended)
-            {
-                idStr.chop(1);
-            }
-
-            uint32_t canId = idStr.toUInt(&ok, 16);
-            if (!ok)
-            {
-                continue;
-            }
-
-            int flags = parts[5].toInt(&ok);
-            if (!ok)
-            {
-                flags = 0;
-            }
-
-            // parts[6] and parts[7] are reserved (0 0)
-            int dlc = parts[8].toInt(&ok);
-            if (!ok)
-            {
-                continue;
-            }
-            int dataLength = parts[9].toInt(&ok);
-            if (!ok)
-            {
-                dataLength = dlc;
-            }
-
             BusMessage msg;
-            msg.setTimestamp(timestamp);
-            msg.setFD(true);
-            msg.setBRS((flags & 0x1) != 0);
-            msg.setExtended(extended);
-            msg.setId(canId);
-            msg.setRX(dir.toLower() == "rx");
-            msg.setLength(dataLength);
-            msg.setInterfaceId(channel.toInt());
-
-            for (int i = 0; i < dataLength && (10 + i) < parts.size(); i++)
+            if (!TraceLineFormat::parseAscCanFdLine(parts, msg))
             {
-                msg.setByte(i, parts[10 + i].toUInt(nullptr, 16));
+                continue;
             }
+            msg.setTimestamp(timestamp);
 
             _messages.append(msg);
-            _messageInterfaces.append(tr("CH %1").arg(channel));
+            _messageInterfaces.append(tr("CH %1").arg(parts[2]));
             continue;
         }
 
