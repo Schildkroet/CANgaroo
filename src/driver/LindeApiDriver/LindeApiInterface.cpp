@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cstring>
 
+
 LindeApiInterface::LindeApiInterface(LindeApiDriver *driver,
                                      std::shared_ptr<LindeSharedDevice> sharedDev,
                                      uint8_t channel)
@@ -33,13 +34,13 @@ QString LindeApiInterface::getName() const
 {
     return _sharedDev->productName
            + QString::number(_sharedDev->deviceIndex)
-           + "_ch"
+           + "_CH"
            + QString::number(_channel);
 }
 
 QString LindeApiInterface::getDetailsStr() const
 {
-    return QStringLiteral("LIN Interface ch%1").arg(_channel);
+    return QStringLiteral("LIN Interface CH%1").arg(_channel);
 }
 
 void LindeApiInterface::applyConfig(const MeasurementInterface &mi)
@@ -72,6 +73,9 @@ void LindeApiInterface::open()
 {
     QMutexLocker lock(&_sharedDev->openMutex);
 
+    if (_isOpen.load())
+        return;
+
     if (_sharedDev->openCount == 0)
     {
         if (!_sharedDev->open())
@@ -86,6 +90,17 @@ void LindeApiInterface::open()
     }
 
     _sharedDev->openCount++;
+
+    if (_channel >= _sharedDev->channelCount)
+    {
+        log_error(QStringLiteral("LindeAPI: channel %1 not available (device has %2)")
+                      .arg(_channel).arg(_sharedDev->channelCount));
+        releaseSharedDevice();
+        return;
+    }
+
+    // Drop anything left from an earlier session; this channel's frames are queued from here on.
+    _sharedDev->setChannelOpen(_channel, true);
 
     // Per-channel configuration. openMutex is held for the whole sequence so a
     // second channel's BusListener thread cannot interleave its EP0 transfers
@@ -135,33 +150,52 @@ void LindeApiInterface::open()
         }
     }
 
+    // Without a bus config or a clean STOP the channel would look open while doing nothing.
     if (!_sharedDev->setBusConfig(_channel, busCfg))
     {
         log_error(QStringLiteral("LindeAPI: setBusConfig failed: %1")
                       .arg(QString::fromStdString(_sharedDev->getLastError())));
+        releaseSharedDevice();
+        return;
     }
 
     if (!_sharedDev->setMode(_channel, LIN_USB_MODE_STOP))
     {
         log_error(QStringLiteral("LindeAPI: setMode failed: %1")
                       .arg(QString::fromStdString(_sharedDev->getLastError())));
+        releaseSharedDevice();
+        return;
     }
 
     // Upload schedule tables if master mode and LDF is provided
     std::memset(_tableEntryCounts, 0, sizeof(_tableEntryCounts));
+    _activeTable = 0;
     if (isMaster && !isListenOnly && !ldfPath.isEmpty())
     {
         LinDb ldb;
         if (ldb.loadFile(ldfPath))
         {
-            const int tableCount = static_cast<int>(
-                std::min(static_cast<qsizetype>(MAX_TABLES),
-                         ldb.scheduleTableNames().size()));
+            // Firmware rejects tables/slots beyond its limits, so never upload them.
+            const int deviceTables = (_sharedDev->scheduleTables > 0) ? _sharedDev->scheduleTables
+                                                                      : MAX_TABLES;
+            const int ldfTables  = static_cast<int>(ldb.scheduleTableNames().size());
+            const int tableCount = std::min({ldfTables, deviceTables, static_cast<int>(MAX_TABLES)});
+            if (ldfTables > tableCount)
+            {
+                log_warning(QStringLiteral("LindeAPI: LDF has %1 schedule tables, device supports %2; extra tables ignored")
+                                .arg(ldfTables).arg(tableCount));
+            }
 
             for (int t = 0; t < tableCount; t++)
             {
                 const auto entries = ldb.scheduleTableEntries(t);
-                const int  entryCount = std::min(static_cast<int>(entries.size()), 255);
+                const int  entryCount = std::min(static_cast<int>(entries.size()),
+                                                 static_cast<int>(LIN_USB_MAX_SCHEDULE_ENTRIES));
+                if (entries.size() > entryCount)
+                {
+                    log_warning(QStringLiteral("LindeAPI: schedule table %1 has %2 entries, device supports %3; extra entries ignored")
+                                    .arg(t).arg(entries.size()).arg(LIN_USB_MAX_SCHEDULE_ENTRIES));
+                }
 
                 for (int s = 0; s < entryCount; s++)
                 {
@@ -202,54 +236,89 @@ void LindeApiInterface::open()
                 _tableEntryCounts[t] = static_cast<uint8_t>(entryCount);
             }
 
-            // Activate the user-selected table
-            _activeTable = _settings.linScheduleTableIndex();
-            const uint8_t tbl = std::min(_activeTable, static_cast<uint8_t>(tableCount - 1));
-
-            _sharedDev->scheduleStart(_channel, tbl, _tableEntryCounts[tbl]);
+            if (tableCount > 0)
+            {
+                // Activate the user-selected table
+                _activeTable = static_cast<uint8_t>(std::clamp(static_cast<int>(_settings.linScheduleTableIndex()),
+                                                               0, tableCount - 1));
+                if (!_sharedDev->scheduleStart(_channel, _activeTable, _tableEntryCounts[_activeTable]))
+                {
+                    log_warning(QStringLiteral("LindeAPI: scheduleStart failed: %1")
+                                    .arg(QString::fromStdString(_sharedDev->getLastError())));
+                }
+            }
+            else
+            {
+                log_warning(QStringLiteral("LindeAPI: LDF has no schedule tables, master schedule not started"));
+            }
         }
     }
-    else if (!isMaster && !isListenOnly && !ldfPath.isEmpty())
+    else if (!isMaster && !isListenOnly)
     {
-        // Slave mode: upload publisher entries (frames this node responds to).
-        LinDb ldb;
-        if (ldb.loadFile(ldfPath))
+        // Slave mode. The firmware slave answers a PID only if the frame is in
+        // the table activated by MODE_START, so every frame this node publishes
+        // goes into table 0, one slot each, deduplicated by ID across all LDF
+        // tables. The master's schedule timing is irrelevant here.
+        static constexpr uint8_t SLAVE_TABLE     = 0;
+        static constexpr unsigned MAX_SLAVE_SLOTS = LIN_USB_MAX_SCHEDULE_ENTRIES;
+
+        uint8_t slot = 0;
+
+        if (!ldfPath.isEmpty())
         {
-            const QString slaveNode = _settings.linSlaveNode();
-
-            // Upload per-frame config for every frame this slave publishes.
-            const int tableCount = ldb.scheduleTableNames().size();
-            QSet<uint8_t> uploaded;
-            for (int t = 0; t < tableCount; t++)
+            LinDb ldb;
+            if (ldb.loadFile(ldfPath))
             {
-                for (const LinScheduleEntry &le : ldb.scheduleTableEntries(t))
+                const QString slaveNode = _settings.linSlaveNode();
+                const int tableCount = ldb.scheduleTableNames().size();
+                QSet<uint8_t> uploaded;
+
+                for (int t = 0; t < tableCount; t++)
                 {
-                    if (le.publisherName != slaveNode)
-                        continue;
-                    if (uploaded.contains(le.frameId))
-                        continue;
-                    uploaded.insert(le.frameId);
-
-                    lin_usb_schedule_entry_t se{};
-                    se.lin_id    = le.frameId;
-                    se.dlc       = le.dlc;
-
-                    // TX when this node is the publisher of the frame, RX otherwise.
-                    const bool isRX = isMaster ? le.isMasterPublisher : (le.publisherName == slaveNode);
-                    se.direction = isRX; // publisher → TX
-
-                    const auto &defaults = _settings.linFrameDefaults();
-                    if (auto it = defaults.find(le.frameId); it != defaults.end())
+                    for (const LinScheduleEntry &le : ldb.scheduleTableEntries(t))
                     {
-                        const QByteArray &payload = it.value();
-                        for (int i = 0; i < payload.size() && i < le.dlc; i++)
-                            se.data[i] = static_cast<uint8_t>(payload[i]);
-                    }
+                        if (le.publisherName != slaveNode)
+                            continue;
+                        if (uploaded.contains(le.frameId))
+                            continue;
+                        if (slot >= MAX_SLAVE_SLOTS)
+                        {
+                            log_warning(QStringLiteral("LindeAPI: slave publishes more than %1 frames, ID 0x%2 dropped")
+                                            .arg(MAX_SLAVE_SLOTS).arg(le.frameId, 2, 16, QLatin1Char('0')));
+                            continue;
+                        }
+                        uploaded.insert(le.frameId);
 
-                    _sharedDev->uploadScheduleEntry(_channel, static_cast<uint8_t>(t), 0, se);
+                        lin_usb_schedule_entry_t se{};
+                        se.lin_id    = le.frameId;
+                        se.dlc       = le.dlc;
+                        se.table_id  = SLAVE_TABLE;
+                        se.direction = 0u; // 0 = device is publisher: this slave sends the response
+
+                        const auto &defaults = _settings.linFrameDefaults();
+                        if (auto it = defaults.find(le.frameId); it != defaults.end())
+                        {
+                            const QByteArray &payload = it.value();
+                            for (int i = 0; i < payload.size() && i < le.dlc; i++)
+                                se.data[i] = static_cast<uint8_t>(payload[i]);
+                        }
+
+                        if (!_sharedDev->uploadScheduleEntry(_channel, SLAVE_TABLE, slot, se))
+                        {
+                            log_warning(QStringLiteral("LindeAPI: uploadScheduleEntry failed for slave slot %1")
+                                            .arg(slot));
+                        }
+                        slot++;
+                    }
                 }
             }
         }
+
+        // Start even with no frames: the slave then still listens and reports
+        // diagnostic frames, instead of leaving the transceiver disabled.
+        _activeTable = SLAVE_TABLE;
+        _tableEntryCounts[SLAVE_TABLE] = slot;
+        _sharedDev->scheduleStart(_channel, SLAVE_TABLE, slot);
     }
 
     _numRx = 0;
@@ -260,17 +329,22 @@ void LindeApiInterface::open()
 
 void LindeApiInterface::close()
 {
+    // openMutex spans the whole teardown: releasing it before stopReader()/close()
+    // let another channel's open() start a second reader on a device being torn down.
+    QMutexLocker lock(&_sharedDev->openMutex);
     if (!_isOpen.load())
         return;
 
-    _sharedDev->setMode(_channel, LIN_USB_MODE_STOP);
     _isOpen.store(false);
+    _sharedDev->setMode(_channel, LIN_USB_MODE_STOP);
+    releaseSharedDevice();
+}
 
-    QMutexLocker lock(&_sharedDev->openMutex);
-    _sharedDev->openCount--;
-    if (_sharedDev->openCount == 0)
+void LindeApiInterface::releaseSharedDevice()
+{
+    _sharedDev->setChannelOpen(_channel, false);
+    if (--_sharedDev->openCount == 0)
     {
-        lock.unlock();
         _sharedDev->stopReader();
         _sharedDev->close();
     }
@@ -312,6 +386,7 @@ bool LindeApiInterface::readMessage(QList<BusMessage> &msglist, unsigned int tim
         return false;
 
     BusMessage msg;
+    msg.setInterfaceId(getId());
     msg.setBusType(BusType::LIN);
     msg.setId(frame.lin_id);
     msg.setLength(frame.dlc);
@@ -355,6 +430,11 @@ void LindeApiInterface::setLinScheduleTable(uint8_t tableIndex)
 {
     if (!_isOpen.load())
         return;
+    if (tableIndex >= MAX_TABLES)
+    {
+        log_warning(QStringLiteral("LindeAPI: schedule table %1 out of range").arg(tableIndex));
+        return;
+    }
     _sharedDev->scheduleStop(_channel);
     _activeTable = tableIndex;
     const uint8_t count = _tableEntryCounts[tableIndex];
@@ -413,5 +493,5 @@ int LindeApiInterface::getNumRxFrames()  { return static_cast<int>(_numRx); }
 int LindeApiInterface::getNumRxErrors()  { return 0; }
 int LindeApiInterface::getNumTxFrames()  { return static_cast<int>(_numTx); }
 int LindeApiInterface::getNumTxErrors()  { return static_cast<int>(_numTxErr); }
-int LindeApiInterface::getNumRxOverruns(){ return 0; }
+int LindeApiInterface::getNumRxOverruns(){ return static_cast<int>(_sharedDev->getRxOverruns(_channel)); }
 int LindeApiInterface::getNumTxDropped() { return 0; }

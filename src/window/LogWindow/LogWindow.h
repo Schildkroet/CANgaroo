@@ -47,6 +47,7 @@ public:
 
 protected:
     void retranslateUi() override;
+    void resizeEvent(QResizeEvent *event) override;
 
 private slots:
     void rowsInserted(const QModelIndex & parent, int first, int last);
@@ -58,4 +59,7 @@ private:
     Ui::LogWindow *ui;
     Backend *_backend;
     QTimer _scroll_timer;
+    int _textContentWidth = 0;
+
+    void updateTextColumnWidth();
 };

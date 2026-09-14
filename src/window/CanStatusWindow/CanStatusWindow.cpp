@@ -189,7 +189,9 @@ void CanStatusWindow::update()
                  qint64 dt = now - ls.lastTime;
                  if (dt >= 500) { // Update load every ~500ms for stability
                      uint64_t dbits = currentBits - ls.lastBits;
-                     unsigned bitrate = _effectiveBitrates.value(intf, intf->getBitrate());
+                     // value(key, default) would evaluate getBitrate() (a netlink query) on every tick
+                     const auto effective = _effectiveBitrates.constFind(intf);
+                     unsigned bitrate = (effective != _effectiveBitrates.constEnd()) ? effective.value() : intf->getBitrate();
                      if (bitrate > 0) {
                          double load = static_cast<double>(dbits) * 1000.0 / static_cast<double>(bitrate) / static_cast<double>(dt) * 100.0;
                          if (load > 100.0) load = 100.0;

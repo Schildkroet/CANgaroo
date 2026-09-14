@@ -6,6 +6,8 @@
 
 #include <QList>
 #include <QMutex>
+#include <QReadWriteLock>
+#include <QString>
 #include <QWaitCondition>
 
 #include <atomic>
@@ -24,20 +26,30 @@ struct LindeSharedDevice
 {
     static constexpr int MAX_CHANNELS = 4;
 
+    // Frames buffered per channel before the oldest are dropped (counted as overruns).
+    static constexpr qsizetype MAX_QUEUED_FRAMES = 4096;
+
     libusb_context       *ctx{nullptr};
     libusb_device_handle *handle{nullptr};
     uint8_t               ep_in{0};
     uint8_t               ep_out{0};
     uint8_t               itf{0};
-    uint8_t               channelCount{0};
-    uint32_t              features{0};   // LIN_USB_FEATURE_* bitmask
+    uint8_t               channelCount{0};   // clamped to MAX_CHANNELS
+    uint8_t               scheduleTables{0}; // per channel, as reported by the device
+    uint32_t              features{0};       // LIN_USB_FEATURE_* bitmask
+    bool                  kernelDriverDetached{false};
 
-    QString productName{"lindeapi"};
-    int     deviceIndex{0};
+    QString productName{"Linde"};
+    int     deviceIndex{0};   // n-th lin_usb device exposing the LIN interface
 
-    // Reference-counted open/close — protected by openMutex.
+    // Reference-counted open/close. Held across the whole open()/startReader()
+    // and stopReader()/close() sequences so channels cannot interleave them.
     QMutex openMutex;
     int    openCount{0};
+
+    // Transfers hold this for reading, close() for writing, so a GUI-thread
+    // query cannot use the handle while another thread tears the device down.
+    QReadWriteLock handleLock;
 
     // Serialises bulk OUT transfers across channels (one shared endpoint).
     QMutex writeMutex;
@@ -47,9 +59,12 @@ struct LindeSharedDevice
     QMutex controlMutex;
 
     // Per-channel receive queues fed by the background reader thread.
+    // channelOpen and rxOverruns are guarded by queueMutex as well.
     QMutex         queueMutex;
     QWaitCondition queueCond;
     QList<lin_usb_host_frame_t> rxQueues[MAX_CHANNELS];
+    bool     channelOpen[MAX_CHANNELS]{};
+    uint64_t rxOverruns[MAX_CHANNELS]{};
 
     // Timestamp epoch captured at first open.
     QMutex  timestampMutex;
@@ -72,8 +87,11 @@ struct LindeSharedDevice
 
     ~LindeSharedDevice();
 
-    // Scan for the first matching lin_usb device, open and claim the LIN
-    // interface. Creates and owns its own libusb_context.
+    // Number of attached lin_usb devices that expose the LIN interface.
+    static int enumerateDevices();
+
+    // Open the deviceIndex-th lin_usb device and claim the LIN interface.
+    // Creates and owns its own libusb_context.
     // Called by LindeApiInterface::open() when openCount reaches 0→1.
     bool open();
     void close();
@@ -81,6 +99,10 @@ struct LindeSharedDevice
     void startReader();
     void stopReader();
     void resetTimestampEpoch();
+
+    // Accept (or drop) received frames for a channel; always clears its queue.
+    void     setChannelOpen(uint8_t channel, bool open);
+    uint64_t getRxOverruns(uint8_t channel);
 
     // Convert device millisecond timestamp to host millisecond timestamp.
     int64_t deviceTimestampToHostMs(uint32_t ts_ms);
@@ -111,6 +133,10 @@ private:
     static constexpr uint8_t BRT_VENDOR_ITF_IN  = 0xC1u;
     static constexpr unsigned CTRL_TIMEOUT_MS   = 1000u;
     static constexpr unsigned BULK_TIMEOUT_MS   = 50u;
+
+    // True if dev matches VID/PID and has the LIN interface; fills its numbers.
+    static bool findLinInterface(libusb_device *dev, uint8_t &itfNum,
+                                 uint8_t &epIn, uint8_t &epOut);
 
     bool controlOut(uint8_t breq, uint16_t wValue, void *data, uint16_t len);
     bool controlIn (uint8_t breq, uint16_t wValue, void *data, uint16_t len);

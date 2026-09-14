@@ -1,6 +1,5 @@
 #include "LindeApiDriver.h"
 #include "LindeApiInterface.h"
-#include "LindeApi.hpp"
 
 #include "core/Log.h"
 #include "driver/GenericLinSetupPage.h"
@@ -23,34 +22,30 @@ bool LindeApiDriver::update()
     deleteAllInterfaces();
     _devices.clear();
 
-    // Use LindeApi channel 0 to probe the device; it manages its own libusb
-    // context so there are no cross-context pointer issues.
-    LindeApi probe(0);
-    if (!probe.open())
+    // Only devices exposing the LIN interface are counted: the VID/PID is shared
+    // with gs_usb adapters, which must not hide a LIN device plugged in after them.
+    const int deviceCount = LindeSharedDevice::enumerateDevices();
+    for (int index = 0; index < deviceCount; index++)
     {
-        const std::string &err = probe.lastError();
-        if (err.find("Access denied") != std::string::npos ||
-            err.find("insufficient permissions") != std::string::npos)
+        auto sharedDev = std::make_shared<LindeSharedDevice>();
+        sharedDev->deviceIndex = index;
+
+        // Brief open to read the channel count; interfaces reopen on measurement start.
+        if (!sharedDev->open())
         {
-            log_warning(QStringLiteral("LindeAPI: cannot open USB device (VID 0x1d50 / PID 0x606f): "
-                                       "permission denied. Add a udev rule or run as root.\n"));
+            log_warning(QStringLiteral("LindeAPI: cannot open device %1: %2")
+                            .arg(index)
+                            .arg(QString::fromStdString(sharedDev->getLastError())));
+            continue;
         }
-        return true;
+        const uint8_t channelCount = sharedDev->channelCount; // already clamped to MAX_CHANNELS
+        sharedDev->close();
+
+        _devices["linusb:" + std::to_string(index)] = sharedDev;
+
+        for (uint8_t ch = 0; ch < channelCount; ch++)
+            addInterface(new LindeApiInterface(this, sharedDev, ch));
     }
-
-    lin_usb_device_config_t dcfg{};
-    uint8_t channelCount = 1;
-    if (probe.getDeviceConfig(dcfg))
-        channelCount = static_cast<uint8_t>(dcfg.icount + 1u);
-
-    probe.close();
-
-    auto sharedDev = std::make_shared<LindeSharedDevice>();
-    sharedDev->deviceIndex = 0;
-    _devices["linusb:0"] = sharedDev;
-
-    for (uint8_t ch = 0; ch < channelCount; ch++)
-        addInterface(new LindeApiInterface(this, sharedDev, ch));
 
     return true;
 }

@@ -80,6 +80,10 @@ typedef enum
  * ------------------------------------------------------------------------- */
 #define LIN_USB_ECHO_ID_RX  0xFFFFFFFFu
 
+/* Slots per schedule table. Not reported by DEVICE_CONFIG, so keep in sync
+ * with LIN_USB_MAX_SCHEDULE_ENTRIES in Core/Inc/lin_usb_config.h. */
+#define LIN_USB_MAX_SCHEDULE_ENTRIES  16u
+
 #define LIN_USB_VERSION_1_3   0u
 #define LIN_USB_VERSION_2_0   1u
 #define LIN_USB_VERSION_2_1   2u

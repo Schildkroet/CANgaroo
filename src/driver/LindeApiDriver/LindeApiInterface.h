@@ -50,6 +50,9 @@ public:
     int getNumTxDropped()  override;
 
 private:
+    // Undo this channel's claim on the shared device; caller holds openMutex.
+    void releaseSharedDevice();
+
     uint8_t                            _channel;
     std::atomic<bool>                  _isOpen{false};
     std::shared_ptr<LindeSharedDevice> _sharedDev;

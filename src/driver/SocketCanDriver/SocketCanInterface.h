@@ -123,6 +123,7 @@ private:
 
     int _idx;
     bool _isOpen;
+    bool _bitrateFallbackLogged = false;
     int _fd;
     QString _name;
 

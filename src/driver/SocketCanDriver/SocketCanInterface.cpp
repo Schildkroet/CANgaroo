@@ -444,7 +444,11 @@ unsigned SocketCanInterface::getBitrate()
         br = _config.bit_timing.bitrate;
     }
 
-    if (br == 0)
+    if (br != 0)
+    {
+        _bitrateFallbackLogged = false;
+    }
+    else
     {
         // Fallback to setup bitrate
         for (auto *network : Backend::instance().getSetup().getNetworks())
@@ -454,8 +458,11 @@ unsigned SocketCanInterface::getBitrate()
                 if (mi->busInterface() == getId())
                 {
                     unsigned fallbackBr = mi->bitrate();
-                    if (!_name.startsWith("vcan"))
+                    // Polled periodically (bus load), so only report the fallback once
+                    // until the kernel reports a real bitrate again
+                    if (!_name.startsWith("vcan") && !_bitrateFallbackLogged)
                     {
+                        _bitrateFallbackLogged = true;
                         log_info(QString("SocketCanInterface %1: getBitrate() fallback to %2 (ID match %3)").arg(_name).arg(fallbackBr).arg(getId()));
                     }
                     return fallbackBr;

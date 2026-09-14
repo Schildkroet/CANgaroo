@@ -23,8 +23,13 @@
 #include "LogWindow.h"
 #include "ui_LogWindow.h"
 
+#include <algorithm>
+
 #include <QDomDocument>
 #include <QFileDialog>
+#include <QHeaderView>
+#include <QResizeEvent>
+#include <QStyle>
 #include <QTextStream>
 #include <QFile>
 #include "core/Backend.h"
@@ -40,6 +45,17 @@ LogWindow::LogWindow(QWidget *parent, Backend &backend) :
     connect(&backend.getLogModel(), &QAbstractItemModel::rowsInserted, this, &LogWindow::rowsInserted);
 
     ui->treeView->setModel(&backend.getLogModel());
+
+    // A stretched last column is clamped to the viewport, so long messages were
+    // cut off with no horizontal scrollbar. Size the text column to its content instead.
+    ui->treeView->header()->setStretchLastSection(false);
+    ui->treeView->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    connect(&backend.getLogModel(), &QAbstractItemModel::modelReset, this, [this]()
+    {
+        _textContentWidth = 0;
+        updateTextColumnWidth();
+    });
+    rowsInserted(QModelIndex(), 0, backend.getLogModel().rowCount(QModelIndex()) - 1);
 
     _scroll_timer.setInterval(1);
     _scroll_timer.setSingleShot(true);
@@ -70,12 +86,34 @@ bool LogWindow::loadXML(Backend &backend, QDomElement &el)
 
 void LogWindow::rowsInserted(const QModelIndex &parent, int first, int last)
 {
-    (void) parent;
-    (void) first;
-    (void) last;
+    const QAbstractItemModel &model = _backend->getLogModel();
+    const QFontMetrics metrics(ui->treeView->font());
+    // Cell padding plus room for the item's focus frame
+    const int padding = 2 * ui->treeView->style()->pixelMetric(QStyle::PM_FocusFrameHMargin, nullptr, ui->treeView) + 12;
+
+    for (int row = first; row <= last; ++row)
+    {
+        const QString text = model.data(model.index(row, LogModel::column_text, parent), Qt::DisplayRole).toString();
+        _textContentWidth = std::max(_textContentWidth, metrics.horizontalAdvance(text) + padding);
+    }
+    updateTextColumnWidth();
 
     _scroll_timer.start();
-    //ui->treeView->scrollToBottom();
+}
+
+void LogWindow::resizeEvent(QResizeEvent *event)
+{
+    ConfigurableWidget::resizeEvent(event);
+    updateTextColumnWidth();
+}
+
+void LogWindow::updateTextColumnWidth()
+{
+    QHeaderView *header = ui->treeView->header();
+    const int otherColumns = header->sectionSize(LogModel::column_time) + header->sectionSize(LogModel::column_level);
+    // Never narrower than the viewport, so short logs look like before
+    const int fill = ui->treeView->viewport()->width() - otherColumns;
+    header->resizeSection(LogModel::column_text, std::max(_textContentWidth, fill));
 }
 
 void LogWindow::_scroll_timer_timeout()

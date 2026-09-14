@@ -6,6 +6,8 @@
 #include <QDeadlineTimer>
 #include <QDateTime>
 
+#include <algorithm>
+#include <chrono>
 #include <cstring>
 
 LindeSharedDevice::~LindeSharedDevice()
@@ -14,71 +16,18 @@ LindeSharedDevice::~LindeSharedDevice()
     close(); // also frees ctx
 }
 
-bool LindeSharedDevice::open()
+bool LindeSharedDevice::findLinInterface(libusb_device *dev, uint8_t &itfNum,
+                                         uint8_t &epIn, uint8_t &epOut)
 {
-    // Always create a fresh context so re-open after close works cleanly.
-    if (ctx)
-    {
-        libusb_exit(ctx);
-        ctx = nullptr;
-    }
-    libusb_init(&ctx);
-
-    libusb_device **list = nullptr;
-    const ssize_t cnt = libusb_get_device_list(ctx, &list);
-    if (cnt < 0)
-    {
-        setLastError("libusb_get_device_list failed");
-        libusb_exit(ctx);
-        ctx = nullptr;
+    libusb_device_descriptor desc{};
+    if (libusb_get_device_descriptor(dev, &desc) != 0)
         return false;
-    }
-
-    libusb_device *found = nullptr;
-    for (ssize_t i = 0; i < cnt; i++)
-    {
-        libusb_device_descriptor desc{};
-        if (libusb_get_device_descriptor(list[i], &desc) != 0)
-            continue;
-        if (desc.idVendor == LIN_USB_VID && desc.idProduct == LIN_USB_PID)
-        {
-            found = list[i];
-            break;
-        }
-    }
-
-    if (!found)
-    {
-        setLastError("device not found (VID/PID mismatch)");
-        libusb_free_device_list(list, 1);
-        libusb_exit(ctx);
-        ctx = nullptr;
+    if (desc.idVendor != LIN_USB_VID || desc.idProduct != LIN_USB_PID)
         return false;
-    }
 
-    int rc = libusb_open(found, &handle);
-    libusb_free_device_list(list, 1);
-    if (rc != 0)
-    {
-        lastError = libusb_strerror(static_cast<libusb_error>(rc));
-        if (rc == LIBUSB_ERROR_ACCESS)
-            log_warning(QStringLiteral("LindeAPI: cannot open USB device (VID 0x1d50 / PID 0x606f): "
-                                       "permission denied. Add a udev rule or run as root.\n"));
-        handle = nullptr;
-        libusb_exit(ctx);
-        ctx = nullptr;
-        return false;
-    }
-
-    // Find the LIN interface by bInterfaceProtocol == LIN_USB_ITF_PROTOCOL.
     libusb_config_descriptor *cfg_desc = nullptr;
-    rc = libusb_get_active_config_descriptor(libusb_get_device(handle), &cfg_desc);
-    if (rc != 0)
-    {
-        lastError = libusb_strerror(static_cast<libusb_error>(rc));
-        close();
+    if (libusb_get_active_config_descriptor(dev, &cfg_desc) != 0)
         return false;
-    }
 
     bool foundItf = false;
     for (uint8_t i = 0; i < cfg_desc->bNumInterfaces && !foundItf; i++)
@@ -91,25 +40,101 @@ bool LindeSharedDevice::open()
                 alt.bInterfaceSubClass == 0xFFu &&
                 alt.bInterfaceProtocol == LIN_USB_ITF_PROTOCOL)
             {
-                itf = alt.bInterfaceNumber;
+                itfNum = alt.bInterfaceNumber;
                 for (uint8_t e = 0; e < alt.bNumEndpoints; e++)
                 {
                     const libusb_endpoint_descriptor &ep = alt.endpoint[e];
                     if ((ep.bEndpointAddress & LIBUSB_ENDPOINT_DIR_MASK) == LIBUSB_ENDPOINT_IN)
-                        ep_in = ep.bEndpointAddress;
+                        epIn = ep.bEndpointAddress;
                     else
-                        ep_out = ep.bEndpointAddress;
+                        epOut = ep.bEndpointAddress;
                 }
                 foundItf = true;
             }
         }
     }
     libusb_free_config_descriptor(cfg_desc);
+    return foundItf;
+}
 
-    if (!foundItf)
+int LindeSharedDevice::enumerateDevices()
+{
+    libusb_context *enumCtx = nullptr;
+    if (libusb_init(&enumCtx) != 0)
+        return 0;
+
+    libusb_device **list = nullptr;
+    const ssize_t cnt = libusb_get_device_list(enumCtx, &list);
+    int count = 0;
+    for (ssize_t i = 0; i < cnt; i++)
     {
-        setLastError("LIN interface (bInterfaceProtocol=0x01) not found");
-        close();
+        uint8_t itfNum = 0, epIn = 0, epOut = 0;
+        if (findLinInterface(list[i], itfNum, epIn, epOut))
+            count++;
+    }
+    if (cnt >= 0)
+        libusb_free_device_list(list, 1);
+    libusb_exit(enumCtx);
+    return count;
+}
+
+bool LindeSharedDevice::open()
+{
+    // Always create a fresh context so re-open after close works cleanly.
+    if (ctx)
+    {
+        libusb_exit(ctx);
+        ctx = nullptr;
+    }
+    if (libusb_init(&ctx) != 0)
+    {
+        ctx = nullptr;
+        setLastError("libusb_init failed");
+        return false;
+    }
+
+    libusb_device **list = nullptr;
+    const ssize_t cnt = libusb_get_device_list(ctx, &list);
+    if (cnt < 0)
+    {
+        setLastError("libusb_get_device_list failed");
+        libusb_exit(ctx);
+        ctx = nullptr;
+        return false;
+    }
+
+    // 1d50:606f is also the gs_usb (candleLight) ID, so only devices that
+    // actually expose the LIN interface count towards deviceIndex.
+    libusb_device *found = nullptr;
+    int linIndex = 0;
+    for (ssize_t i = 0; i < cnt && !found; i++)
+    {
+        if (!findLinInterface(list[i], itf, ep_in, ep_out))
+            continue;
+        if (linIndex++ == deviceIndex)
+            found = list[i];
+    }
+
+    if (!found)
+    {
+        setLastError("no lin_usb device with a LIN interface at index " + std::to_string(deviceIndex));
+        libusb_free_device_list(list, 1);
+        libusb_exit(ctx);
+        ctx = nullptr;
+        return false;
+    }
+
+    int rc = libusb_open(found, &handle);
+    libusb_free_device_list(list, 1);
+    if (rc != 0)
+    {
+        if (rc == LIBUSB_ERROR_ACCESS)
+            setLastError("permission denied (VID 0x1d50 / PID 0x606f). Add a udev rule or run as root.");
+        else
+            setLastError(libusb_strerror(static_cast<libusb_error>(rc)));
+        handle = nullptr;
+        libusb_exit(ctx);
+        ctx = nullptr;
         return false;
     }
 
@@ -123,6 +148,7 @@ bool LindeSharedDevice::open()
             close();
             return false;
         }
+        kernelDriverDetached = true;
     }
 #endif
 
@@ -140,8 +166,27 @@ bool LindeSharedDevice::open()
         close();
         return false;
     }
-    channelCount = static_cast<uint8_t>(dcfg.icount + 1u);
-    features     = dcfg.features;
+
+    // Computed as unsigned so icount 0xFF cannot wrap to zero channels.
+    const unsigned reportedChannels = dcfg.icount + 1u;
+    if (reportedChannels > MAX_CHANNELS)
+    {
+        log_warning(QStringLiteral("LindeAPI: device reports %1 channels, only the first %2 are supported")
+                        .arg(reportedChannels).arg(MAX_CHANNELS));
+    }
+    channelCount   = static_cast<uint8_t>(std::min<unsigned>(reportedChannels, MAX_CHANNELS));
+    scheduleTables = dcfg.schedule_tables;
+    features       = dcfg.features;
+
+    {
+        QMutexLocker lock(&queueMutex);
+        for (int ch = 0; ch < MAX_CHANNELS; ch++)
+        {
+            channelOpen[ch] = false;
+            rxOverruns[ch]  = 0;
+            rxQueues[ch].clear();
+        }
+    }
 
     setLastError(std::string());
     return true;
@@ -149,19 +194,23 @@ bool LindeSharedDevice::open()
 
 void LindeSharedDevice::close()
 {
+    QWriteLocker lock(&handleLock);
     if (handle)
     {
         libusb_release_interface(handle, itf);
 #ifndef _WIN32
-        libusb_attach_kernel_driver(handle, itf);
+        if (kernelDriverDetached)
+            libusb_attach_kernel_driver(handle, itf);
 #endif
         libusb_close(handle);
-        handle       = nullptr;
-        ep_in        = 0;
-        ep_out       = 0;
-        itf          = 0;
-        channelCount = 0;
-        features     = 0;
+        handle               = nullptr;
+        ep_in                = 0;
+        ep_out               = 0;
+        itf                  = 0;
+        channelCount         = 0;
+        scheduleTables       = 0;
+        features             = 0;
+        kernelDriverDetached = false;
     }
     if (ctx)
     {
@@ -177,22 +226,38 @@ void LindeSharedDevice::startReader()
     readerRunning.store(true, std::memory_order_relaxed);
     readerThread = std::thread([this]()
     {
+        bool errorLogged = false;
         while (readerRunning.load(std::memory_order_relaxed))
         {
             lin_usb_host_frame_t frame{};
             int transferred = 0;
-            int rc = libusb_bulk_transfer(handle, ep_in,
-                                          reinterpret_cast<unsigned char *>(&frame),
-                                          static_cast<int>(sizeof(frame)),
-                                          &transferred,
-                                          BULK_TIMEOUT_MS);
+            const int rc = libusb_bulk_transfer(handle, ep_in,
+                                                reinterpret_cast<unsigned char *>(&frame),
+                                                static_cast<int>(sizeof(frame)),
+                                                &transferred,
+                                                BULK_TIMEOUT_MS);
             if (rc == LIBUSB_ERROR_TIMEOUT)
                 continue;
-            if (rc != 0 || transferred != static_cast<int>(sizeof(frame)))
+            if (rc != 0)
+            {
+                // Errors like NO_DEVICE (unplugged) return immediately: log once
+                // and back off instead of spinning a core.
+                if (!errorLogged)
+                {
+                    log_error(QStringLiteral("LindeAPI: USB read failed: %1")
+                                  .arg(QString::fromUtf8(libusb_strerror(static_cast<libusb_error>(rc)))));
+                    errorLogged = true;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(BULK_TIMEOUT_MS));
+                continue;
+            }
+            errorLogged = false;
+            if (transferred != static_cast<int>(sizeof(frame)))
                 continue;
 
+            // channelCount only changes in open()/close(), while the reader is stopped.
             const uint8_t ch = frame.channel;
-            if (ch >= MAX_CHANNELS)
+            if (ch >= channelCount)
             {
                 log_error(QStringLiteral("LindeAPI: received frame for invalid channel %1")
                               .arg(static_cast<int>(ch)));
@@ -200,7 +265,17 @@ void LindeSharedDevice::startReader()
             }
 
             QMutexLocker lock(&queueMutex);
-            rxQueues[ch].append(frame);
+            // Frames for a channel nobody has open would pile up and be
+            // delivered stale on its next open.
+            if (!channelOpen[ch])
+                continue;
+            auto &queue = rxQueues[ch];
+            if (queue.size() >= MAX_QUEUED_FRAMES)
+            {
+                queue.removeFirst();
+                rxOverruns[ch]++;
+            }
+            queue.append(frame);
             queueCond.wakeAll();
         }
     });
@@ -222,10 +297,30 @@ void LindeSharedDevice::stopReader()
         q.clear();
 }
 
+void LindeSharedDevice::setChannelOpen(uint8_t channel, bool open)
+{
+    if (channel >= MAX_CHANNELS)
+        return;
+    QMutexLocker lock(&queueMutex);
+    channelOpen[channel] = open;
+    rxQueues[channel].clear();
+    if (open)
+        rxOverruns[channel] = 0;
+    queueCond.wakeAll();
+}
+
+uint64_t LindeSharedDevice::getRxOverruns(uint8_t channel)
+{
+    if (channel >= MAX_CHANNELS)
+        return 0;
+    QMutexLocker lock(&queueMutex);
+    return rxOverruns[channel];
+}
+
 void LindeSharedDevice::resetTimestampEpoch()
 {
     uint32_t ts_ms = 0;
-    // Use channel 0 to probe the device timestamp.
+    // The device clock is shared by all channels; channel 0 always exists.
     bool valid = getTimestamp(0, ts_ms);
     QMutexLocker lock(&timestampMutex);
     deviceTicksStart_ms = ts_ms;
@@ -244,6 +339,9 @@ int64_t LindeSharedDevice::deviceTimestampToHostMs(uint32_t ts_ms)
 
 bool LindeSharedDevice::readFrame(uint8_t channel, lin_usb_host_frame_t &frame, unsigned timeout_ms)
 {
+    if (channel >= MAX_CHANNELS)
+        return false;
+
     QMutexLocker lock(&queueMutex);
     const QDeadlineTimer deadline(timeout_ms);
     while (rxQueues[channel].isEmpty())
@@ -260,6 +358,13 @@ bool LindeSharedDevice::readFrame(uint8_t channel, lin_usb_host_frame_t &frame, 
 
 bool LindeSharedDevice::sendFrame(const lin_usb_host_frame_t &frame)
 {
+    QReadLocker handleGuard(&handleLock);
+    if (!handle)
+    {
+        setLastError("device not open");
+        return false;
+    }
+
     QMutexLocker lock(&writeMutex);
     lin_usb_host_frame_t tmp = frame;
     int transferred = 0;
@@ -280,6 +385,13 @@ bool LindeSharedDevice::sendFrame(const lin_usb_host_frame_t &frame)
 
 bool LindeSharedDevice::controlOut(uint8_t breq, uint16_t wValue, void *data, uint16_t len)
 {
+    QReadLocker handleGuard(&handleLock);
+    if (!handle)
+    {
+        setLastError("device not open");
+        return false;
+    }
+
     QMutexLocker tx(&controlMutex);
     int rc = libusb_control_transfer(handle, BRT_VENDOR_ITF_OUT, breq,
                                      wValue, static_cast<uint16_t>(itf),
@@ -295,6 +407,13 @@ bool LindeSharedDevice::controlOut(uint8_t breq, uint16_t wValue, void *data, ui
 
 bool LindeSharedDevice::controlIn(uint8_t breq, uint16_t wValue, void *data, uint16_t len)
 {
+    QReadLocker handleGuard(&handleLock);
+    if (!handle)
+    {
+        setLastError("device not open");
+        return false;
+    }
+
     QMutexLocker tx(&controlMutex);
     int rc = libusb_control_transfer(handle, BRT_VENDOR_ITF_IN, breq,
                                      wValue, static_cast<uint16_t>(itf),
