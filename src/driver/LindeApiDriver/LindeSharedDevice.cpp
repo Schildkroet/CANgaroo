@@ -176,6 +176,9 @@ bool LindeSharedDevice::open()
     }
     channelCount   = static_cast<uint8_t>(std::min<unsigned>(reportedChannels, MAX_CHANNELS));
     scheduleTables = dcfg.schedule_tables;
+    // Older firmware leaves the field zero; fall back to the historic value.
+    scheduleEntries = dcfg.schedule_entries ? dcfg.schedule_entries
+                                            : static_cast<uint8_t>(LIN_USB_MAX_SCHEDULE_ENTRIES);
     features       = dcfg.features;
 
     {
@@ -209,6 +212,7 @@ void LindeSharedDevice::close()
         itf                  = 0;
         channelCount         = 0;
         scheduleTables       = 0;
+        scheduleEntries      = 0;
         features             = 0;
         kernelDriverDetached = false;
     }

@@ -12,7 +12,7 @@ TEMPLATE = app
 CONFIG += warn_on
 CONFIG += link_pkgconfig
 
-VERSION = 0.6.5
+VERSION = 0.7.0
 DEFINES += VERSION_STRING=\\\"$${VERSION}\\\"
 
 TRANSLATIONS = \

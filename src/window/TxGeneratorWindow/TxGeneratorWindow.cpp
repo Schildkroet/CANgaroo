@@ -485,6 +485,11 @@ void TxGeneratorWindow::on_btnSendOnce_released()
 
 void TxGeneratorWindow::on_btnBulkRun_clicked()
 {
+    if (!_backend.isMeasurementRunning()) {
+        ui->btnBulkRun->setChecked(false);
+        return;
+    }
+
     QList<QTreeWidgetItem*> selected = ui->treeActive->selectedItems();
     if (selected.isEmpty()) return;
 
@@ -761,11 +766,16 @@ void TxGeneratorWindow::onSetupChanged()
 
 void TxGeneratorWindow::updateMeasurementState()
 {
+    // The active list stays editable without a measurement (add, remove, edit,
+    // change interval); only actions that put frames on the bus need one.
     bool running = _backend.isMeasurementRunning();
     ui->btnSendOnce->setEnabled(running);
-    ui->groupBoxActive->setEnabled(running);
+    ui->btnBulkRun->setEnabled(running);
     if (!running) {
         stopAll();
+    }
+    for (int i = 0; i < _cyclicMessages.size(); ++i) {
+        updateRowUI(i);
     }
     updateSendTimer();
 }
@@ -799,6 +809,8 @@ void TxGeneratorWindow::updateActiveList()
             btnStatus->setStyleSheet("QPushButton { color: #28a745; font-weight: bold; background: transparent; border: 1px solid #28a745; border-radius: 3px; } QPushButton:hover { background: #28a745; color: white; }");
         }
 
+        // Starting needs a running measurement; stopping is always allowed.
+        btnStatus->setEnabled(cm.enabled || _backend.isMeasurementRunning());
         connect(btnStatus, &QPushButton::clicked, this, &TxGeneratorWindow::onStatusButtonClicked);
         ui->treeActive->setItemWidget(item, 0, btnStatus);
 
@@ -839,6 +851,7 @@ void TxGeneratorWindow::updateRowUI(int row)
         } else {
             btnStatus->setStyleSheet("QPushButton { color: #28a745; font-weight: bold; background: transparent; border: 1px solid #28a745; border-radius: 3px; } QPushButton:hover { background: #28a745; color: white; }");
         }
+        btnStatus->setEnabled(cm.enabled || _backend.isMeasurementRunning());
     }
 
     item->setText(1, "0x" + QString("%1").arg(cm.msg.getId(), 3, 16, QChar('0')).toUpper());
@@ -883,6 +896,7 @@ void TxGeneratorWindow::setInterval(int row, int interval_ms)
 void TxGeneratorWindow::setEnabled(int row, bool enabled)
 {
     CyclicMessage &cm = _cyclicMessages[row];
+    if (enabled && !_backend.isMeasurementRunning()) { return; } // nothing can be sent
     if (enabled && !cm.enabled) { cm.nextDue = {}; } // fresh schedule, send immediately
     cm.enabled = enabled;
     updateRowUI(row);

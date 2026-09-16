@@ -836,11 +836,19 @@ bool SocketCanInterface::readMessage(QList<BusMessage> &msglist, unsigned int ti
 
         if (frame.can_id & CAN_ERR_FLAG) {
             const uint32_t errId = frame.can_id & ~static_cast<uint32_t>(CAN_ERR_FLAG);
+            // The ID field carries error classes, not a CAN ID: don't show or
+            // decode it as one.
+            msg.setId(0);
+            msg.setExtended(false);
             if (errId & 0x00000001) msg.setErrorFlag(BusError::TxTimeout);
             if (errId & 0x00000020) msg.setErrorFlag(BusError::Ack);
             if (errId & 0x00000040) msg.setErrorFlag(BusError::BusOff);
+            if (errId & 0x00000100) msg.setErrorFlag(BusError::Restarted);
             if (errId & 0x00000004) {
                 if (frame.data[1] & 0x03) msg.setErrorFlag(BusError::Overrun);
+                if (frame.data[1] & 0x0C) msg.setErrorFlag(BusError::ErrorWarning);
+                if (frame.data[1] & 0x30) msg.setErrorFlag(BusError::ErrorPassive);
+                if (frame.data[1] & 0x40) msg.setErrorFlag(BusError::ErrorActive);
             }
             if (errId & 0x00000008) {
                 const uint8_t prot = static_cast<uint8_t>(frame.data[2]);
@@ -848,8 +856,10 @@ bool SocketCanInterface::readMessage(QList<BusMessage> &msglist, unsigned int ti
                 if (prot & 0x02) msg.setErrorFlag(BusError::Form);
                 if (prot & 0x04) msg.setErrorFlag(BusError::Stuff);
                 if (prot & 0x18) msg.setErrorFlag(BusError::Bit);
+                if (frame.data[3] == 0x08) msg.setErrorFlag(BusError::Crc);
             }
-            if (errId & 0x00000080) msg.setErrorFlag(BusError::Generic);
+            // CAN_ERR_BUSERROR (0x80) or anything unclassified falls through to
+            // the Generic flag below.
             if (!msg.isErrorFrame()) msg.setErrorFlag(BusError::Generic);
         }
 

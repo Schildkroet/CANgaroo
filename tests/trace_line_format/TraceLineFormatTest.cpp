@@ -235,6 +235,14 @@ void TraceLineFormatTest::canDumpErrorFrame_data()
         << uint(BusError::Generic) << QStringLiteral("(0.000000) can0 20000080#0000000000000000");
     QTest::newRow("bus off: CAN_ERR_BUSOFF")
         << uint(BusError::BusOff) << QStringLiteral("(0.000000) can0 20000040#0000000000000000");
+    QTest::newRow("restarted: CAN_ERR_RESTARTED")
+        << uint(BusError::Restarted) << QStringLiteral("(0.000000) can0 20000100#0000000000000000");
+    QTest::newRow("warning: CAN_ERR_CRTL, data[1] CAN_ERR_CRTL_RX_WARNING | TX_WARNING")
+        << uint(BusError::ErrorWarning) << QStringLiteral("(0.000000) can0 20000004#000C000000000000");
+    QTest::newRow("passive: CAN_ERR_CRTL, data[1] CAN_ERR_CRTL_RX_PASSIVE | TX_PASSIVE")
+        << uint(BusError::ErrorPassive) << QStringLiteral("(0.000000) can0 20000004#0030000000000000");
+    QTest::newRow("active: CAN_ERR_CRTL, data[1] CAN_ERR_CRTL_ACTIVE")
+        << uint(BusError::ErrorActive) << QStringLiteral("(0.000000) can0 20000004#0040000000000000");
     QTest::newRow("stuff: CAN_ERR_PROT | BUSERROR, data[2] CAN_ERR_PROT_STUFF")
         << uint(BusError::Stuff) << QStringLiteral("(0.000000) can0 20000088#0000040000000000");
     QTest::newRow("crc: CAN_ERR_PROT | BUSERROR, data[3] CAN_ERR_PROT_LOC_CRC_SEQ")

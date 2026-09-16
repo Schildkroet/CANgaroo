@@ -49,6 +49,10 @@ enum class BusError : uint32_t
     TxTimeout        = 0x0080,
     LinNotResponded  = 0x0100,
     LinChecksumError = 0x0200,
+    Restarted        = 0x0400,   // controller recovered from bus-off
+    ErrorWarning     = 0x0800,   // controller reached the error-warning level
+    ErrorPassive     = 0x1000,   // controller reached the error-passive level
+    ErrorActive      = 0x2000,   // controller back to error-active
     Generic          = 0x8000,
 };
 Q_DECLARE_FLAGS(BusErrors, BusError)
@@ -87,6 +91,10 @@ public:
 
     [[nodiscard]] bool isErrorFrame() const;
     void setErrorFrame(bool isErrorFrame);
+
+    // LIN event bits carried in getFlags() / setFlags()
+    static constexpr uint8_t lin_flag_sleep  = 0x04u;
+    static constexpr uint8_t lin_flag_wakeup = 0x08u;
 
     [[nodiscard]] bool isLinSleepFrame()  const;
     [[nodiscard]] bool isLinWakeupFrame() const;

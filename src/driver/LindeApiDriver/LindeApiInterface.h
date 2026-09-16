@@ -63,6 +63,10 @@ private:
     std::atomic<uint64_t> _numRx{0};
     std::atomic<uint64_t> _numTx{0};
     std::atomic<uint64_t> _numTxErr{0};
+    std::atomic<uint64_t> _numRxErr{0};
+
+    // Frames the device itself had to drop; refreshed by getState().
+    std::atomic<uint32_t> _devRxDropped{0};
 
     // schedule entry counts per table (populated during open)
     static constexpr uint8_t MAX_TABLES = 8;

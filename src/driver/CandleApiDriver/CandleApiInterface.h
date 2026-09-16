@@ -98,8 +98,13 @@ private:
     bool setBitTiming(uint32_t bitrate, uint32_t samplePoint);
     bool setDataBitTiming(uint32_t bitrate, uint32_t samplePoint);
 
+    // Frames handed to the device, waiting for the echo that confirms they were
+    // transmitted on the bus; only then are they shown as TX.
+    static constexpr int MaxPendingTx = 256;
     QMutex _txMutex;
-    QList<BusMessage> _txMsgList;
+    QList<BusMessage> _pendingTx;
+
+    bool takeConfirmedTx(const candle_fd_frame_t &echo, BusMessage &txMsg);
 };
 
 #endif // CANDLEAPIINTERFACE_H

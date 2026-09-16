@@ -42,7 +42,8 @@ typedef enum
 #define LIN_USB_MODE_START        1u
 #define LIN_USB_MODE_PAUSE        2u
 
-#define LIN_USB_FLAG_MASTER  0x01u  /* act as LIN master (sends break+sync) */
+#define LIN_USB_FLAG_MASTER       0x01u  /* act as LIN master (sends break+sync) */
+#define LIN_USB_FLAG_LISTEN_ONLY  0x02u  /* monitor: never transmit, report all  */
 
 /* -------------------------------------------------------------------------
  * Device feature flags
@@ -51,6 +52,7 @@ typedef enum
 #define LIN_USB_FEATURE_TIMESTAMP       0x0002u
 #define LIN_USB_FEATURE_CUSTOM_BAUDRATE 0x0004u
 #define LIN_USB_FEATURE_BUS_STATE       0x0008u
+#define LIN_USB_FEATURE_LISTEN_ONLY     0x0010u
 
 /* -------------------------------------------------------------------------
  * Frame flags
@@ -58,7 +60,8 @@ typedef enum
 #define LIN_USB_FRAME_FLAG_ENHANCED_CS  0x01u
 #define LIN_USB_FRAME_FLAG_SUBSCRIBER   0x02u
 #define LIN_USB_FRAME_FLAG_ERROR        0x04u
-#define LIN_USB_FRAME_FLAG_TX_UPDATE    0x08u
+#define LIN_USB_FRAME_FLAG_WAKEUP       0x08u  /* wakeup event (device->host only) */
+#define LIN_USB_FRAME_FLAG_TX_UPDATE    LIN_USB_FRAME_FLAG_WAKEUP  /* historic name */
 #define LIN_USB_FRAME_FLAG_SPORADIC     0x10u
 #define LIN_USB_FRAME_FLAG_RESPONDED    0x20u
 #define LIN_USB_FRAME_FLAG_VALID        0x40u
@@ -80,8 +83,13 @@ typedef enum
  * ------------------------------------------------------------------------- */
 #define LIN_USB_ECHO_ID_RX  0xFFFFFFFFu
 
-/* Slots per schedule table. Not reported by DEVICE_CONFIG, so keep in sync
- * with LIN_USB_MAX_SCHEDULE_ENTRIES in Core/Inc/lin_usb_config.h. */
+/* echo_id of a device->host acknowledgement of a bulk-OUT "set frame data":
+ * not a bus event, LIN_USB_FRAME_FLAG_ERROR = LIN ID not in the running
+ * schedule, payload unchanged. */
+#define LIN_USB_ECHO_ID_SET_DATA_ACK  0u
+
+/* Fallback slots per schedule table, used only when the device reports 0 in
+ * DEVICE_CONFIG (firmware older than the schedule_entries field). */
 #define LIN_USB_MAX_SCHEDULE_ENTRIES  16u
 
 #define LIN_USB_VERSION_1_3   0u
@@ -120,7 +128,7 @@ typedef struct
 {
     uint8_t  schedule_tables;
     uint8_t  supported_baudrates;
-    uint8_t  reserved;
+    uint8_t  schedule_entries;   /* slots per schedule table (0 = older firmware) */
     uint8_t  icount;
     uint32_t sw_version;
     uint32_t hw_version;
@@ -171,16 +179,19 @@ typedef struct
 
 typedef enum
 {
-    LIN_USB_BUS_STATE_OK      = 0,
-    LIN_USB_BUS_STATE_BUS_OFF = 1,
-    LIN_USB_BUS_STATE_PASSIVE = 2,
-    LIN_USB_BUS_STATE_ERROR   = 3,
+    LIN_USB_BUS_STATE_OK       = 0,
+    LIN_USB_BUS_STATE_BUS_OFF  = 1,
+    LIN_USB_BUS_STATE_PASSIVE  = 2,  /* deprecated, use _STOPPED */
+    LIN_USB_BUS_STATE_ERROR    = 3,
+    LIN_USB_BUS_STATE_STOPPED  = 4,
+    LIN_USB_BUS_STATE_SLEEPING = 5,
 } lin_usb_bus_state_e;
 
 typedef struct
 {
-    uint8_t state;        /* lin_usb_bus_state_e */
-    uint8_t reserved[3];
+    uint8_t  state;       /* lin_usb_bus_state_e                                 */
+    uint8_t  reserved;
+    uint16_t dropped;     /* frames dropped because the device IN queue was full */
 } lin_usb_bus_state_t;
 
 #pragma pack(pop)

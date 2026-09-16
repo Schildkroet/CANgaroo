@@ -139,6 +139,7 @@ QVariant UnifiedTraceViewModel::data(const QModelIndex &index, int role) const
             const BusMessage &cur  = item->rawFrame();
             const BusMessage &prev = item->prevSameIdFrame();
             if (prev.getLength() == 0) { return QVariant(); }
+            if (cur.isErrorFrame() || prev.isErrorFrame()) { return QVariant(); } // text is error flags, not bytes
             uint64_t mask = 0;
             const int len = qMin(cur.getLength(), prev.getLength());
             for (int i = 0; i < len; ++i) {
@@ -509,6 +510,7 @@ QVariant UnifiedTraceViewModel::data_DisplayRole(const QModelIndex &index, [[may
                     if (msg.isLinWakeupFrame()) return QStringLiteral("LIN.WUP");
                     return QStringLiteral("LIN");
                 }
+                if (msg.isErrorFrame()) return QStringLiteral("ERR");
                 QString t;
                 if (msg.isFD())       t += QStringLiteral("FD.");
                 if (msg.isExtended()) t += QStringLiteral("EXT"); else t += QStringLiteral("STD");
@@ -516,7 +518,12 @@ QVariant UnifiedTraceViewModel::data_DisplayRole(const QModelIndex &index, [[may
                 if (msg.isBRS())      t += QStringLiteral(".BRS");
                 return t;
             }
-            case column_canid: return QString("0x%1").arg(msg.getId(), 0, 16).toUpper();
+            case column_canid:
+                // A CAN error frame carries error classes instead of an ID; a LIN
+                // frame flagged as an error is a real frame, so keep its ID.
+                if (msg.isErrorFrame() && msg.busType() == BusType::CAN)
+                    return QStringLiteral("-");
+                return QString("0x%1").arg(msg.getId(), 0, 16).toUpper();
             case column_dlc: return msg.getLength();
             case column_data: return dataAsciiMode() ? msg.getDataAsciiString() : msg.getDataHexString();
             case column_name:

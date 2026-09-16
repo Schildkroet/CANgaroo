@@ -320,6 +320,7 @@ QVariant AggregatedTraceViewModel::data_ChangedBytesRole(const QModelIndex &inde
     const BusMessage &cur  = item->_lastmsg;
     const BusMessage &prev = item->_prevmsg;
     if (prev.getLength() == 0) { return QVariant(); }
+    if (cur.isErrorFrame() || prev.isErrorFrame()) { return QVariant(); } // text is error flags, not bytes
 
     uint64_t mask = 0;
     const int len = qMin(cur.getLength(), prev.getLength());

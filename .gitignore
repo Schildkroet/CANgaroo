@@ -39,6 +39,10 @@ test.dbc
 .vscode/
 .claude/
 
+# Generated for IntelliSense/clangd from `make -Bn`; machine-specific paths
+compile_commands.json
+.cache/
+
 build/
 bin/
 

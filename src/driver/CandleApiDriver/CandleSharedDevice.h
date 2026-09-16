@@ -50,7 +50,7 @@ struct CandleSharedDevice
     static constexpr int MAX_CHANNELS = 8;
 
     candle_handle handle{nullptr};
-    QString productName{"candle"};
+    QString productName{"Candle"};
     int deviceIndex{0};
 
     // Open/close reference count — protected by openMutex.

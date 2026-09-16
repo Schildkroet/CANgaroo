@@ -252,12 +252,20 @@ QVariant BaseTraceViewModel::data_DisplayRole_Message(const QModelIndex &index, 
                 if (currentMsg.isLinWakeupFrame()) return QStringLiteral("LIN.WUP");
                 return QStringLiteral("LIN");
             }
+            if (currentMsg.isErrorFrame()) {
+                return QStringLiteral("ERR");
+            }
             QString _type = QString(currentMsg.isFD() ? "FD.":"") + QString(currentMsg.isExtended()? "EXT" : "STD") + QString(currentMsg.isRTR()?".RTR":"") + QString((currentMsg.isBRS()?".BRS":""));
             return _type;
         }
 
         case column_canid:
-            return currentMsg.getIdString();
+            // A CAN error frame carries error classes instead of an ID. A LIN
+            // frame flagged as an error (no response, bad checksum) is a real
+            // frame, so keep its ID visible.
+            return (currentMsg.isErrorFrame() && currentMsg.busType() == BusType::CAN)
+                       ? QStringLiteral("-")
+                       : currentMsg.getIdString();
 
         case column_name:
         {

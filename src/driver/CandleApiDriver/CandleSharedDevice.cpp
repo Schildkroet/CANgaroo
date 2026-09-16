@@ -47,8 +47,11 @@ void CandleSharedDevice::startReader()
                 continue;
             }
             const candle_frametype_t frameType = candle_fd_frame_type(&frame);
+            // Echoes are TX confirmations: CandleApiInterface only shows a sent
+            // frame once the device has echoed it back.
             if (frameType != CANDLE_FRAMETYPE_RECEIVE
-                    && frameType != CANDLE_FRAMETYPE_ERROR) {
+                    && frameType != CANDLE_FRAMETYPE_ERROR
+                    && frameType != CANDLE_FRAMETYPE_ECHO) {
                 continue;
             }
             const uint8_t ch = frame.channel;

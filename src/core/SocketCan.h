@@ -47,10 +47,16 @@ inline constexpr std::uint32_t err_prot       = 0x00000008U;
 inline constexpr std::uint32_t err_ack        = 0x00000020U;
 inline constexpr std::uint32_t err_busoff     = 0x00000040U;
 inline constexpr std::uint32_t err_buserror   = 0x00000080U;
+inline constexpr std::uint32_t err_restarted  = 0x00000100U;
 
 // <linux/can/error.h>: error payload
 inline constexpr int err_dlc = 8;
 inline constexpr std::uint8_t err_crtl_rx_overflow  = 0x01;  // data[1]
+inline constexpr std::uint8_t err_crtl_rx_warning   = 0x04;  // data[1]
+inline constexpr std::uint8_t err_crtl_tx_warning   = 0x08;  // data[1]
+inline constexpr std::uint8_t err_crtl_rx_passive   = 0x10;  // data[1]
+inline constexpr std::uint8_t err_crtl_tx_passive   = 0x20;  // data[1]
+inline constexpr std::uint8_t err_crtl_active       = 0x40;  // data[1]
 inline constexpr std::uint8_t err_prot_bit          = 0x01;  // data[2]
 inline constexpr std::uint8_t err_prot_form         = 0x02;  // data[2]
 inline constexpr std::uint8_t err_prot_stuff        = 0x04;  // data[2]
@@ -104,6 +110,27 @@ struct ErrorFrame
     if (flags.testFlag(BusError::TxTimeout))
     {
         error.classes |= err_tx_timeout;
+    }
+    if (flags.testFlag(BusError::Restarted))
+    {
+        error.classes |= err_restarted;
+    }
+    // BusError does not record whether TX or RX errors caused the state
+    // change, so both directions are flagged.
+    if (flags.testFlag(BusError::ErrorWarning))
+    {
+        error.classes |= err_crtl;
+        error.data[1] |= err_crtl_rx_warning | err_crtl_tx_warning;
+    }
+    if (flags.testFlag(BusError::ErrorPassive))
+    {
+        error.classes |= err_crtl;
+        error.data[1] |= err_crtl_rx_passive | err_crtl_tx_passive;
+    }
+    if (flags.testFlag(BusError::ErrorActive))
+    {
+        error.classes |= err_crtl;
+        error.data[1] |= err_crtl_active;
     }
 
     // Generic or otherwise unclassified: an unspecified bus error, which is also

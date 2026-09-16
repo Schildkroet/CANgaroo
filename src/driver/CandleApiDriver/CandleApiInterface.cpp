@@ -236,12 +236,12 @@ CandleApiInterface::~CandleApiInterface()
 
 QString CandleApiInterface::getName() const
 {
-    return _sharedDev->productName + QString::number(_sharedDev->deviceIndex) + "_ch" + QString::number(_channel);
+    return _sharedDev->productName + QString::number(_sharedDev->deviceIndex) + "_CH" + QString::number(_channel);
 }
 
 QString CandleApiInterface::getDetailsStr() const
 {
-    return _sharedDev->productName + " ch" + QString::number(_channel)
+    return _sharedDev->productName + " CH" + QString::number(_channel)
            + " | " + QString::fromStdWString(getPath());
 }
 
@@ -282,6 +282,10 @@ uint32_t CandleApiInterface::getCapabilities()
 
         if (caps.feature & CANDLE_FEATURE_FD) {
             retval |= BusInterface::capability_canfd;
+        }
+
+        if (caps.feature & CANDLE_FEATURE_AUTO_RESTART) {
+            retval |= BusInterface::capability_auto_restart;
         }
 
         return retval;
@@ -419,6 +423,15 @@ void CandleApiInterface::open()
     if (_settings.isTripleSampling()) {
         flags |= CANDLE_MODE_TRIPLE_SAMPLE;
     }
+    if (_settings.doAutoRestart()) {
+        // Vendor flag: only send it to firmware that advertises the feature,
+        // other gs_usb devices may treat unknown mode bits as an error.
+        candle_capability_t caps;
+        if (candle_channel_get_capabilities(_sharedDev->handle, _channel, &caps)
+            && (caps.feature & CANDLE_FEATURE_AUTO_RESTART)) {
+            flags |= CANDLE_MODE_AUTO_RESTART;
+        }
+    }
 
     // Enable CAN FD: auto-enable on FD-capable devices even if never explicitly configured
     {
@@ -474,6 +487,11 @@ void CandleApiInterface::open()
     _numRx = 0;
     _numTx = 0;
     _numTxErr = 0;
+    {
+        // Starting the channel discards anything still queued on the device
+        QMutexLocker lock(&_txMutex);
+        _pendingTx.clear();
+    }
 
     if (!candle_channel_start(_sharedDev->handle, _channel, flags)) {
         log_error(tr("CandleApi: channel %1 start failed (error %2)")
@@ -515,6 +533,11 @@ bool CandleApiInterface::isOpen()
 void CandleApiInterface::close()
 {
     candle_channel_stop(_sharedDev->handle, _channel);
+    {
+        // Stopping the channel discards frames the device has not sent yet
+        QMutexLocker lock(&_txMutex);
+        _pendingTx.clear();
+    }
 
     QMutexLocker devLock(&_sharedDev->openMutex);
     _sharedDev->openCount--;
@@ -583,45 +606,92 @@ void CandleApiInterface::sendMessage(const BusMessage &msg)
     _sharedDev->writeMutex.unlock();
 
     if (ok) {
-        _numTx++;
-
+        // Not shown yet: the device echoes the frame once it has actually been
+        // transmitted (see readMessage()), so a frame that never makes it onto
+        // the bus (e.g. no ACK with the cable unplugged) never appears as TX.
         BusMessage txMsg = msg;
         txMsg.setFD(_isFdEnabled && (msg.isFD() || msg.getLength() > 8));
         txMsg.setRX(false);
-        uint32_t t_dev = 0;
-        uint64_t ts_us = 0;
-        if (!candle_dev_get_timestamp_us(_sharedDev->handle, &t_dev)
-                || !_sharedDev->deviceTimestampToHostUs(t_dev, ts_us)) {
-            // 0 is a sentinel: readMessage() will assign a timestamp from the
-            // next RX frame so TX stays on the same device-clock time base.
-            ts_us = 0;
-        }
-        txMsg.setTimestamp_us(static_cast<int64_t>(ts_us));
         QMutexLocker lock(&_txMutex);
-        _txMsgList.append(txMsg);
+        if (_pendingTx.size() >= MaxPendingTx) {
+            // The device stopped echoing (e.g. channel reset): drop the oldest.
+            _pendingTx.removeFirst();
+            _numTxErr++;
+        }
+        _pendingTx.append(txMsg);
     } else {
         _numTxErr++;
     }
 }
 
+bool CandleApiInterface::takeConfirmedTx(const candle_fd_frame_t &echo, BusMessage &txMsg)
+{
+    const bool echoFd = (echo.flags & CANDLE_FRAME_FLAG_FD) != 0;
+    const uint8_t echoDlc = echoFd ? echo.can_dlc : std::min(echo.can_dlc, static_cast<uint8_t>(8u));
+    const uint32_t echoId = echo.can_id & 0x1FFFFFFFu;
+    const bool echoExt = (echo.can_id & CANDLE_ID_EXTENDED) != 0;
+    const bool echoRtr = (echo.can_id & CANDLE_ID_RTR) != 0;
+
+    QMutexLocker lock(&_txMutex);
+
+    // Echoes arrive in transmit order, but the device may have dropped a frame
+    // without echoing it (channel restart, overflow): match by content and
+    // count older, never confirmed entries as TX errors.
+    for (int i = 0; i < _pendingTx.size(); i++) {
+        const BusMessage &p = _pendingTx.at(i);
+        const uint8_t sentLen = p.isFD() ? p.getLength() : std::min(p.getLength(), static_cast<uint8_t>(8u));
+        const uint8_t sentDlc = p.isFD() ? candle_len_to_dlc(sentLen) : sentLen;
+
+        if (p.getId() != echoId || p.isExtended() != echoExt || sentDlc != echoDlc) {
+            continue;
+        }
+
+        bool sameData = true;
+        for (int b = 0; !echoRtr && b < sentLen; b++) {
+            if (p.getByte(b) != echo.data[b]) {
+                sameData = false;
+                break;
+            }
+        }
+        if (!sameData) {
+            continue;
+        }
+
+        txMsg = p;
+        _numTxErr += static_cast<uint64_t>(i);
+        _pendingTx.erase(_pendingTx.begin(), _pendingTx.begin() + i + 1);
+        return true;
+    }
+    return false;
+}
+
 bool CandleApiInterface::readMessage(QList<BusMessage> &msglist, unsigned int timeout_ms)
 {
-    // Enqueue tx echo messages
-    {
-        QMutexLocker lock(&_txMutex);
-        msglist.append(_txMsgList);
-        _txMsgList.clear();
-    }
-    const bool hasTx = !msglist.isEmpty();
-    const unsigned readTimeout = hasTx ? 1 : timeout_ms;
-
     // The reader thread fills per-channel queues; we just wait for our channel.
     CandleQueuedFrame queuedFrame;
-    if (!_sharedDev->readFrame(_channel, queuedFrame, readTimeout)) {
-        return hasTx;
+    if (!_sharedDev->readFrame(_channel, queuedFrame, timeout_ms)) {
+        return false;
     }
     candle_fd_frame_t frame = queuedFrame.frame;
     const candle_frametype_t frameType = candle_fd_frame_type(&frame);
+
+    const int64_t frameTs_us = queuedFrame.timestampValid
+            ? static_cast<int64_t>(queuedFrame.timestampUs)
+            : static_cast<int64_t>(QDateTime::currentMSecsSinceEpoch()) * 1000LL;
+
+    if (frameType == CANDLE_FRAMETYPE_ECHO) {
+        // TX confirmation: the device transmitted one of our frames. Show it
+        // now, stamped with the device's transmit time.
+        BusMessage txMsg;
+        if (!takeConfirmedTx(frame, txMsg)) {
+            return false;
+        }
+        _numTx++;
+        txMsg.setInterfaceId(getId());
+        txMsg.setTimestamp_us(frameTs_us);
+        msglist.append(txMsg);
+        return true;
+    }
 
     _numRx++;
 
@@ -633,11 +703,19 @@ bool CandleApiInterface::readMessage(QList<BusMessage> &msglist, unsigned int ti
     if (frameType == CANDLE_FRAMETYPE_ERROR) {
         const uint32_t errId = candle_fd_frame_id(&frame);
         const uint8_t *d = candle_fd_frame_data(&frame);
+        // The ID field carries error classes, not a CAN ID: don't show or
+        // decode it as one.
+        msg.setId(0);
+        msg.setExtended(false);
         if (errId & 0x00000001) msg.setErrorFlag(BusError::TxTimeout);
         if (errId & 0x00000020) msg.setErrorFlag(BusError::Ack);
         if (errId & 0x00000040) msg.setErrorFlag(BusError::BusOff);
+        if (errId & 0x00000100) msg.setErrorFlag(BusError::Restarted);
         if (errId & 0x00000004) {
             if (d[1] & 0x03) msg.setErrorFlag(BusError::Overrun);
+            if (d[1] & 0x0C) msg.setErrorFlag(BusError::ErrorWarning);
+            if (d[1] & 0x30) msg.setErrorFlag(BusError::ErrorPassive);
+            if (d[1] & 0x40) msg.setErrorFlag(BusError::ErrorActive);
         }
         if (errId & 0x00000008) {
             const uint8_t prot = d[2];
@@ -645,8 +723,9 @@ bool CandleApiInterface::readMessage(QList<BusMessage> &msglist, unsigned int ti
             if (prot & 0x02) msg.setErrorFlag(BusError::Form);
             if (prot & 0x04) msg.setErrorFlag(BusError::Stuff);
             if (prot & 0x18) msg.setErrorFlag(BusError::Bit);
+            if (d[3] == 0x08) msg.setErrorFlag(BusError::Crc);
         }
-        if (errId & 0x00000080) msg.setErrorFlag(BusError::Generic);
+        // CAN_ERR_BUSERROR (0x80) or anything unclassified
         if (!msg.isErrorFrame()) msg.setErrorFlag(BusError::Generic);
     }
     msg.setRTR(candle_fd_frame_is_rtr(&frame));
@@ -663,27 +742,8 @@ bool CandleApiInterface::readMessage(QList<BusMessage> &msglist, unsigned int ti
         msg.setByte(i, data[i]);
     }
 
-    const int64_t rxTs_us = queuedFrame.timestampValid
-            ? static_cast<int64_t>(queuedFrame.timestampUs)
-            : static_cast<int64_t>(QDateTime::currentMSecsSinceEpoch()) * 1000LL;
-    msg.setTimestamp_us(rxTs_us);
-
-    // Any TX message that couldn't get a device-clock timestamp (sentinel 0)
-    // is pinned to just before this RX frame so it stays on the same time base.
-    for (auto &pending : msglist) {
-        if (!pending.isRX() && pending.getTimestamp_us() == 0) {
-            pending.setTimestamp_us(rxTs_us - 1);
-        }
-    }
-
+    msg.setTimestamp_us(frameTs_us);
     msglist.append(msg);
-
-    // Sort by timestamp: RX frames buffered before the TX was issued naturally
-    // carry earlier device timestamps and must appear first in the trace.
-    std::sort(msglist.begin(), msglist.end(), [](const BusMessage &a, const BusMessage &b) {
-        return a.getTimestamp_us() < b.getTimestamp_us();
-    });
-
     return true;
 }
 

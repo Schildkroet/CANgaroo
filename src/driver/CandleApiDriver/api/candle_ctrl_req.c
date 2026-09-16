@@ -34,8 +34,9 @@ enum {
     CANDLE_TIMESTAMP_GET       = 6,
     /* 7: IDENTIFY, 8: GET_USER_ID, 9: SET_USER_ID (not used here) */
     CANDLE_BREQ_DATA_BITTIMING = 10,
-    /* 11: SET_TERMINATION, not used here */
-    CANDLE_BREQ_GET_STATE      = 12,
+    /* 11: BT_CONST_EXT, 12: SET_TERMINATION, 13: GET_TERMINATION (not used here);
+     * numbering as in enum gs_usb_breq, Linux drivers/net/can/usb/gs_usb.c */
+    CANDLE_BREQ_GET_STATE      = 14,
 };
 
 static void candle_ctrl_logf(const wchar_t *fmt, ...)

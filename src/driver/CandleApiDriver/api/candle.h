@@ -82,6 +82,11 @@ enum {
     CANDLE_FEATURE_GET_STATE                = 0x2000,
 };
 
+/** Vendor extension (CANILFD firmware, not upstream gs_usb): the channel
+ *  recovers from bus-off by itself after a fixed delay, enabled per channel
+ *  with CANDLE_MODE_AUTO_RESTART. Macros because 0x80000000 does not fit a C enum. */
+#define CANDLE_FEATURE_AUTO_RESTART  0x80000000UL
+
 /* Flags in the flags byte of received/transmitted frames */
 enum {
     CANDLE_FRAME_FLAG_OVERFLOW = 0x01,
@@ -109,6 +114,10 @@ typedef enum {
     CANDLE_MODE_PAD_PKTS_TO_MAX  = 0x0080,
     CANDLE_MODE_FD               = 0x0100,
 } candle_mode_t;
+
+/** Vendor extension, see CANDLE_FEATURE_AUTO_RESTART. Only set it on devices
+ *  that advertise that feature bit. */
+#define CANDLE_MODE_AUTO_RESTART     0x80000000UL
 
 typedef enum {
     CANDLE_ERR_OK                  =  0,

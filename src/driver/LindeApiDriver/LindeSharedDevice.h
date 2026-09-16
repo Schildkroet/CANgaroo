@@ -35,7 +35,8 @@ struct LindeSharedDevice
     uint8_t               ep_out{0};
     uint8_t               itf{0};
     uint8_t               channelCount{0};   // clamped to MAX_CHANNELS
-    uint8_t               scheduleTables{0}; // per channel, as reported by the device
+    uint8_t               scheduleTables{0};  // per channel, as reported by the device
+    uint8_t               scheduleEntries{0}; // slots per table, as reported by the device
     uint32_t              features{0};       // LIN_USB_FEATURE_* bitmask
     bool                  kernelDriverDetached{false};
 

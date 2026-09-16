@@ -134,8 +134,8 @@ void BusMessage::setErrorFlag(BusError flag) { _errorFlags |= flag; }
 void BusMessage::clearErrorFlag(BusError flag) { _errorFlags &= ~BusErrors(flag); }
 void BusMessage::setErrorFlags(BusErrors flags) { _errorFlags = flags; }
 
-bool BusMessage::isLinSleepFrame()  const { return _busType == BusType::LIN && (_flags & 0x04u); }
-bool BusMessage::isLinWakeupFrame() const { return _busType == BusType::LIN && (_flags & 0x08u); }
+bool BusMessage::isLinSleepFrame()  const { return _busType == BusType::LIN && (_flags & lin_flag_sleep); }
+bool BusMessage::isLinWakeupFrame() const { return _busType == BusType::LIN && (_flags & lin_flag_wakeup); }
 
 BusInterfaceId BusMessage::getInterfaceId() const
 {
@@ -540,6 +540,10 @@ QString BusMessage::getErrorFlagsString() const
         { BusError::TxTimeout,        "TIMEOUT"        },
         { BusError::LinNotResponded,  "NOT RESPONDED"  },
         { BusError::LinChecksumError, "CHECKSUM ERROR" },
+        { BusError::Restarted,        "RESTARTED"      },
+        { BusError::ErrorWarning,     "WARNING"        },
+        { BusError::ErrorPassive,     "PASSIVE"        },
+        { BusError::ErrorActive,      "ACTIVE"         },
         { BusError::Generic,          "ERROR"          },
     };
     QStringList parts;

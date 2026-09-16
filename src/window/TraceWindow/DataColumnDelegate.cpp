@@ -31,62 +31,75 @@ DataColumnDelegate::DataColumnDelegate(QObject *parent)
 
 void DataColumnDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const
 {
-    uint64_t changedMask = index.data(BaseTraceViewModel::ChangedBytesRole).value<uint64_t>();
-    if (changedMask == 0) {
-        QStyledItemDelegate::paint(painter, option, index);
-        return;
-    }
-
+    // Every row is painted by this path, changed bytes or not. Falling back to
+    // QStyledItemDelegate::paint() for unchanged rows placed the text slightly
+    // differently, so a row's spacing jumped each time its mask toggled.
     QStyleOptionViewItem opt = option;
     initStyleOption(&opt, index);
 
+    QStyle *style = opt.widget ? opt.widget->style() : QApplication::style();
+
+    // The text rect depends on opt.text, so take it before clearing the text.
+    const QRect textRect = style->subElementRect(QStyle::SE_ItemViewItemText, &opt, opt.widget);
     const QString text = opt.text;
     opt.text.clear();
-
-    QStyle *style = opt.widget ? opt.widget->style() : QApplication::style();
     style->drawControl(QStyle::CE_ItemViewItem, &opt, painter, opt.widget);
 
-    const QRect textRect = style->subElementRect(QStyle::SE_ItemViewItemText, &opt, opt.widget);
-    const int textMargin = style->pixelMetric(QStyle::PM_FocusFrameHMargin, nullptr, opt.widget) + 1;
-    const QFontMetrics fm(opt.font);
+    if (text.isEmpty()) { return; }
 
     const bool selected = opt.state & QStyle::State_Selected;
-    const QColor normalColor = opt.palette.color(
+    QColor normalColor = opt.palette.color(
         selected ? QPalette::Active : QPalette::Normal,
         selected ? QPalette::HighlightedText : QPalette::Text);
-    const bool isDark = ThemeManager::instance().isDarkMode();
-    const QColor changedColor = isDark ? QColor(210, 120, 0) : QColor(180, 90, 0);
 
-    // Error color (from ForegroundRole) takes priority over changed-byte color.
+    // ForegroundRole carries the row color: error red, or the aggregated view's
+    // stale-message fade (alpha). Selection keeps the highlighted-text color.
     const QVariant fgVariant = index.data(Qt::ForegroundRole);
-    const bool hasErrorColor = fgVariant.isValid();
-    const QColor errorColor  = hasErrorColor ? fgVariant.value<QColor>() : QColor();
+    if (!selected && fgVariant.canConvert<QColor>()) {
+        normalColor = fgVariant.value<QColor>();
+    }
+
+    const bool isDark = ThemeManager::instance().isDarkMode();
+    QColor changedColor = isDark ? QColor(210, 120, 0) : QColor(180, 90, 0);
+    changedColor.setAlpha(normalColor.alpha());
+
+    // Models return no mask for error frames, whose text is not per-byte.
+    const uint64_t changedMask = index.data(BaseTraceViewModel::ChangedBytesRole).value<uint64_t>();
 
     constexpr int drawFlags = Qt::AlignLeft | Qt::AlignVCenter | Qt::TextSingleLine;
+    const int textMargin = style->pixelMetric(QStyle::PM_FocusFrameHMargin, nullptr, opt.widget) + 1;
+    const QRect area = textRect.adjusted(textMargin, 0, -textMargin, 0);
+    const QFontMetrics fm(opt.font);
 
     painter->save();
     painter->setFont(opt.font);
     painter->setClipRect(textRect);
 
-    // Text format: "AB CD EF ..." — split on spaces to get one token per byte
-    const QStringList tokens = text.split(QLatin1Char(' '));
-    int x = textRect.left() + textMargin;
-    for (int i = 0; i < tokens.size(); ++i) {
-        const bool changed = !hasErrorColor && (i < 64) && ((changedMask >> i) & 1ULL);
-        painter->setPen(hasErrorColor ? errorColor : (changed ? changedColor : normalColor));
+    if (changedMask == 0) {
+        painter->setPen(normalColor);
+        painter->drawText(area, drawFlags, text);
+        painter->restore();
+        return;
+    }
 
-        const int tokenWidth = fm.horizontalAdvance(tokens.at(i));
-        painter->drawText(QRect(x, textRect.top(), tokenWidth, textRect.height()),
-                          drawFlags, tokens.at(i));
-        x += tokenWidth;
+    // Text format: "AB CD EF " (hex) or "A B C " (ASCII), one token per byte.
+    // Token x positions come from the advance of the whole prefix, so the layout
+    // matches the single drawText() above exactly.
+    int byteIndex = 0;
+    qsizetype pos = 0;
+    while (pos < text.size()) {
+        qsizetype end = text.indexOf(QLatin1Char(' '), pos);
+        if (end < 0) { end = text.size(); }
 
-        if (i < tokens.size() - 1) {
-            const int spaceWidth = fm.horizontalAdvance(QLatin1Char(' '));
-            painter->setPen(hasErrorColor ? errorColor : normalColor);
-            painter->drawText(QRect(x, textRect.top(), spaceWidth, textRect.height()),
-                              drawFlags, QStringLiteral(" "));
-            x += spaceWidth;
+        if (end > pos) {
+            const bool changed = byteIndex < 64 && ((changedMask >> byteIndex) & 1ULL);
+            painter->setPen(changed ? changedColor : normalColor);
+            const int x = area.left() + fm.horizontalAdvance(text.left(pos));
+            painter->drawText(QRect(x, area.top(), area.right() - x + 1, area.height()),
+                              drawFlags, text.mid(pos, end - pos));
+            ++byteIndex;
         }
+        pos = end + 1;
     }
 
     painter->restore();
