@@ -22,11 +22,8 @@
 #pragma once
 
 #include "driver/GpioProvider.h"
+#include "driver/UsbVendorInterface/UsbVendorInterface.h"
 #include "aio_usb_protocol.h"
-
-/* CMake/qmake provides the libusb include directory so <libusb.h> resolves on
- * both Linux (/usr/include/libusb-1.0) and Windows (vcpkg / manual install). */
-#include <libusb.h>
 
 #include <atomic>
 #include <cstdint>
@@ -59,7 +56,7 @@ public:
     // present. Caller owns the instances (delete to close).
     static QList<AiodeApi *> scan(QObject *parent);
 
-    bool isOpen() const { return dev_ != nullptr; }
+    bool isOpen() const { return usb_.isOpen(); }
 
     // ---- GpioProvider ----
     QString name() const override { return name_; }
@@ -71,15 +68,20 @@ public:
     const std::string &lastError() const { return last_error_; }
 
 private:
-    // Open the device at the given USB bus/address and claim its AIO interface.
-    bool openByAddress(uint8_t bus, uint8_t addr, int index);
-    // Open an already-referenced device handle and claim its AIO interface.
-    bool openDevice(libusb_device *device, int index);
+    // DeviceInterfaceGUID of the AIO interface in the firmware's MS OS 2.0 descriptor.
+    static constexpr UsbVendorInterface::Id USB_ID{
+        .vid = AIO_USB_VID,
+        .pid = AIO_USB_PID,
+        .protocol = AIO_USB_ITF_PROTOCOL,
+        .windowsGuid = "{4c86c041-3321-446b-ba72-6a4be9f1c2b0}",
+    };
+
+    // Open the index-th device exposing the AIO interface and claim it.
+    bool open(int index);
     void close();
 
     bool controlOut(uint8_t breq, uint16_t wValue, void *data, uint16_t len);
     bool controlIn (uint8_t breq, uint16_t wValue, void *data, uint16_t len);
-    bool setError(int libusb_rc, const char *context);
 
     bool setHostFormat();
     bool getCaps(aio_usb_caps_t &caps);
@@ -89,12 +91,7 @@ private:
     void stopPolling();
     void pollLoop();
 
-    libusb_context       *ctx_  = nullptr;
-    libusb_device_handle *dev_  = nullptr;
-    uint8_t  ep_in_  = 0;
-    uint8_t  ep_out_ = 0;
-    uint8_t  itf_    = 0;
-    bool     kernel_driver_detached_ = false;
+    UsbVendorInterface usb_;
 
     aio_usb_caps_t caps_{};
     QString        name_{"aiode"};

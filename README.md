@@ -109,7 +109,6 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 
 * Install [Qt 6](https://www.qt.io/download-qt-installer) (Community / Open Source) including the **Qt Serial Bus** component.
 * Install [Python 3](https://www.python.org/downloads/) and [pybind11](https://github.com/pybind/pybind11) (`pip install pybind11`).
-* Install [libusb 1.0](https://libusb.info/) so that `pkg-config libusb-1.0` finds it (needed by the lin_usb and aio_usb drivers). With MSYS2: `pacman -S mingw-w64-x86_64-libusb`.
 * Open `cangaroo.pro` in Qt Creator and build.
 
 #### Deployment
@@ -118,7 +117,6 @@ Include the required Qt6 libraries or run `windeployqt` on the `.exe`:
 ```
 windeployqt --release cangaroo.exe
 ```
-Also ship `libusb-1.0.dll` next to the `.exe`.
 
 ### Optional hardware drivers
 

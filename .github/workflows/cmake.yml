@@ -420,7 +420,6 @@ jobs:
             mingw-w64-x86_64-ntldd
             mingw-w64-x86_64-python
             mingw-w64-x86_64-pybind11
-            mingw-w64-x86_64-libusb
             git
 
       - name: Download PCAN-Basic SDK

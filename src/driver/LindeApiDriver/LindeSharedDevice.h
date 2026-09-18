@@ -1,8 +1,7 @@
 #pragma once
 
 #include "lin_usb_protocol.h"
-
-#include <libusb.h>
+#include "driver/UsbVendorInterface/UsbVendorInterface.h"
 
 #include <QList>
 #include <QMutex>
@@ -19,7 +18,7 @@
 //
 // The device multiplexes all channels through one USB bulk IN endpoint;
 // each received lin_usb_host_frame_t carries a channel field. This struct
-// owns exactly ONE libusb handle and ONE reader thread per physical device.
+// owns exactly ONE USB handle and ONE reader thread per physical device.
 // All LindeApiInterface instances for the same device share it and read from
 // their per-channel queue.
 struct LindeSharedDevice
@@ -29,16 +28,19 @@ struct LindeSharedDevice
     // Frames buffered per channel before the oldest are dropped (counted as overruns).
     static constexpr qsizetype MAX_QUEUED_FRAMES = 4096;
 
-    libusb_context       *ctx{nullptr};
-    libusb_device_handle *handle{nullptr};
-    uint8_t               ep_in{0};
-    uint8_t               ep_out{0};
-    uint8_t               itf{0};
+    // DeviceInterfaceGUID of the LIN interface in the firmware's MS OS 2.0 descriptor.
+    static constexpr UsbVendorInterface::Id USB_ID{
+        .vid = LIN_USB_VID,
+        .pid = LIN_USB_PID,
+        .protocol = LIN_USB_ITF_PROTOCOL,
+        .windowsGuid = "{dfaa1f65-e194-414c-ac5d-66ea6a8ba9c9}",
+    };
+
+    UsbVendorInterface    usb;
     uint8_t               channelCount{0};   // clamped to MAX_CHANNELS
     uint8_t               scheduleTables{0};  // per channel, as reported by the device
     uint8_t               scheduleEntries{0}; // slots per table, as reported by the device
     uint32_t              features{0};       // LIN_USB_FEATURE_* bitmask
-    bool                  kernelDriverDetached{false};
 
     QString productName{"Linde"};
     int     deviceIndex{0};   // n-th lin_usb device exposing the LIN interface
@@ -92,7 +94,6 @@ struct LindeSharedDevice
     static int enumerateDevices();
 
     // Open the deviceIndex-th lin_usb device and claim the LIN interface.
-    // Creates and owns its own libusb_context.
     // Called by LindeApiInterface::open() when openCount reaches 0→1.
     bool open();
     void close();
@@ -130,14 +131,8 @@ struct LindeSharedDevice
     bool wakeup(uint8_t channel);
 
 private:
-    static constexpr uint8_t BRT_VENDOR_ITF_OUT = 0x41u;
-    static constexpr uint8_t BRT_VENDOR_ITF_IN  = 0xC1u;
     static constexpr unsigned CTRL_TIMEOUT_MS   = 1000u;
     static constexpr unsigned BULK_TIMEOUT_MS   = 50u;
-
-    // True if dev matches VID/PID and has the LIN interface; fills its numbers.
-    static bool findLinInterface(libusb_device *dev, uint8_t &itfNum,
-                                 uint8_t &epIn, uint8_t &epOut);
 
     bool controlOut(uint8_t breq, uint16_t wValue, void *data, uint16_t len);
     bool controlIn (uint8_t breq, uint16_t wValue, void *data, uint16_t len);

@@ -7,7 +7,7 @@ CAN bus analyzer and trace tool built with Qt6 and C++.
 - **qmake** (not CMake) with `.pro` / `.pri` files
 - Entry point: `src/src.pro`
 - Requires **Qt 6** (Widgets, Xml, Charts, SerialPort, SerialBus, Network)
-- Requires **libusb-1.0** via pkg-config on all platforms (LindeAPI and aiode drivers are always built)
+- Requires **libusb-1.0** via pkg-config on Linux/macOS (LindeAPI and aiode drivers are always built); Windows uses WinUSB instead
 - Version is defined in `src/src.pro` via `VERSION = x.y.z`
 
 ### Build (Linux)
@@ -92,7 +92,7 @@ qmake6 CONFIG+=kvaser CONFIG+=peakcan
 | GrIP          | All      | Serial port based                          |
 | CANBlaster    | All      | UDP based                                  |
 | CandleAPI     | Windows  | gs_usb devices                             |
-| LindeAPI      | All      | lin_usb LIN adapter, libusb-1.0            |
+| LindeAPI      | All      | lin_usb LIN adapter, via `UsbVendorInterface` |
 | PeakCAN       | Windows  | Requires `CONFIG+=peakcan`                 |
 | Kvaser        | All      | Requires `CONFIG+=kvaser` + CANlib SDK     |
 | Vector        | All      | Qt SerialBus plugin (`vectorcan`)          |
@@ -107,6 +107,10 @@ qmake6 CONFIG+=kvaser CONFIG+=peakcan
 - `BusListener` — runs in a dedicated QThread, calls `readMessage()` in a loop and feeds `BusTrace`
 - Driver constructors use `reinterpret_cast<CanDriver*>(driver)`
 - TX messages: appended to a mutex-protected `_txMsgList` in `sendMessage()`, dequeued in `readMessage()`
+- Vendor USB interfaces of the composite 1d50:606f adapter (lin_usb, aio_usb) go through
+  `driver/UsbVendorInterface`: libusb on Linux/macOS, WinUSB by `DeviceInterfaceGUID` on Windows.
+  Never `libusb_open()` it on Windows: that opens every WinUSB interface and collides with
+  `CandleApiDriver` on gs_usb interface 0 (see `src/docs/usb_interfaces.md`)
 - Qt SerialBus plugins (Vector, TinyCAN): check `QCanBus::instance()->plugins().contains()` before use
 - Drivers with enable/disable toggle (CANBlaster, TinyCAN): follow settings pattern in `mainwindow.cpp`
 

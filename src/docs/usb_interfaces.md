@@ -7,7 +7,7 @@ own host driver in CANgaroo.
 | Interface | Purpose | `bInterfaceProtocol` | Endpoints (IN / OUT) | Host driver (CANgaroo) |
 |-----------|---------|----------------------|----------------------|------------------------|
 | gs_usb  | CAN channels            | `0xFF` | `0x81` / `0x02` | SocketCAN (Linux, kernel `gs_usb`), `CandleApiDriver` (Windows) |
-| lin_usb | LIN channels            | `0x01` | `0x83` / `0x04` | `LindeApiDriver` (libusb, all platforms) |
+| lin_usb | LIN channels            | `0x01` | `0x83` / `0x04` | `LindeApiDriver` (all platforms) |
 | aio_usb | Digital I/O + analog in | `0x02` | `0x85` / `0x06` | `AiodeDriver` (`AiodeApi`, GPIO Control window) |
 
 ## Common ground
@@ -114,10 +114,22 @@ identify (no hardware timestamps, no triple sampling).
 - **Linux:** the kernel `gs_usb` driver binds interface 0 and creates `canX`
   netdevs; CANgaroo uses them through `SocketCanDriver`. Opening the LIN/AIO
   interfaces with libusb does not detach it.
-- **Windows:** the BOS / MS OS 2.0 descriptor marks **interface 0 only** as
-  WinUSB with the candleLight `DeviceInterfaceGUID`
-  `{c15b4308-04d3-11e6-b3ea-6057189e6443}`, so `CandleApiDriver` finds it without
-  a driver install.
+- **Windows:** the BOS / MS OS 2.0 descriptor marks every interface as WinUSB,
+  each with its own `DeviceInterfaceGUID`, so no driver install is needed:
+
+  | Interface | `DeviceInterfaceGUID` | Opened by |
+  | :-- | :-- | :-- |
+  | gs_usb  | `{c15b4308-04d3-11e6-b3ea-6057189e6443}` (candleLight) | `CandleApiDriver` |
+  | lin_usb | `{dfaa1f65-e194-414c-ac5d-66ea6a8ba9c9}` | `LindeApiDriver` |
+  | aio_usb | `{4c86c041-3321-446b-ba72-6a4be9f1c2b0}` | `AiodeDriver` |
+
+  Each host driver opens only its own interface's device node. WinUSB allows one
+  handle per interface, and `libusb_open()` opens *all* WinUSB interfaces of a
+  composite device, so libusb would fail with "access denied" as soon as another
+  driver holds a sibling interface. That is why lin_usb and aio_usb go through
+  `UsbVendorInterface` (`src/driver/UsbVendorInterface/`): libusb on
+  Linux/macOS, WinUSB by GUID on Windows. The GUIDs are duplicated in
+  `LindeSharedDevice.h` and `AiodeApi.hpp`; keep them in sync with the firmware.
 
 ---
 
@@ -204,8 +216,8 @@ and a missing `VALID` means a checksum error.
 ### Host side
 
 `LindeApiDriver` enumerates every device with a LIN interface and creates
-interfaces named `Linde<device>_CH<channel>`. `LindeSharedDevice` owns the libusb
-handle, one reader thread and the per-channel queues; each `LindeApiInterface`
+interfaces named `Linde<device>_CH<channel>`. `LindeSharedDevice` owns the USB
+handle (`UsbVendorInterface`), one reader thread and the per-channel queues; each `LindeApiInterface`
 reference-counts the shared device.
 
 ---
