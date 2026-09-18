@@ -1,8 +1,8 @@
 # USB adapter interfaces: gs_usb (CAN), lin_usb (LIN), aio_usb (I/O)
 
-The STM32G473 adapter firmware (`Test2_G473VET`) enumerates as **one composite USB
-device** with up to three vendor-specific interfaces. Each interface has its own
-bulk endpoint pair and its own host driver in CANgaroo.
+The STM32G473 adapter firmware enumerates as **one composite USB device** with up to three
+vendor-specific interfaces. Each interface has its own bulk endpoint pair and its
+own host driver in CANgaroo.
 
 | Interface | Purpose | `bInterfaceProtocol` | Endpoints (IN / OUT) | Host driver (CANgaroo) |
 |-----------|---------|----------------------|----------------------|------------------------|
@@ -12,8 +12,9 @@ bulk endpoint pair and its own host driver in CANgaroo.
 
 ## Common ground
 
-**USB identity.** VID `0x1d50`, PID `0x606f`, the candleLight/gs_usb ID (the PID
-is a placeholder, see the TODO in `usb_descriptors.c`). The ID alone does not
+**USB identity.** VID `0x1d50`, PID `0x606f`, the candleLight/gs_usb ID — the
+exact ID the Linux kernel `gs_usb` driver binds to, so it is deliberate and not a
+placeholder (see the header comment in `usb_descriptors.c`). The ID alone does not
 identify the adapter: host drivers must look for the interface with the right
 class/subclass/protocol (`0xFF` / `0xFF` / protocol above). A plain candleLight
 dongle has the same VID/PID but no LIN or AIO interface.
@@ -37,8 +38,9 @@ All firmware handlers share one dispatcher (`tud_vendor_control_xfer_cb` in
 
 **Errors are STALLs.** An unknown request or an out-of-range channel/line index
 stalls EP0; libusb reports `LIBUSB_ERROR_PIPE`. Checks on `wValue` happen in the
-SETUP stage. lin_usb also checks payload fields (table id, slot, DLC) in the DATA
-stage and stalls there if they are invalid.
+SETUP stage. lin_usb additionally validates payload fields (table id, slot, DLC)
+in the DATA stage; a request that fails those checks is **silently ignored**, not
+stalled, because the status stage has already been armed.
 
 **Byte order.** All structures are packed and little-endian. Each interface has a
 `HOST_FORMAT` request (bRequest 0) inherited from gs_usb; the firmware ignores its
@@ -65,7 +67,7 @@ channel does not work: only one handle can claim the interface.
 ## gs_usb (CAN)
 
 Compatible with the Linux kernel `gs_usb` driver (`drivers/net/can/usb/gs_usb.c`) and
-the candleLight Windows API. Firmware: `Core/Inc/gs_usb.h`, `Core/Src/gs_usb.c`,
+the candleLight Windows API. Firmware: `Libraries/USBClasses/gs_usb.{h,c}`,
 config in `gs_usb_config.h` (`GS_USB_CAN_CHANNEL_COUNT`, currently 2; FDCAN clock
 96 MHz).
 
@@ -121,10 +123,12 @@ identify (no hardware timestamps, no triple sampling).
 
 ## lin_usb (LIN)
 
-Firmware: `Core/Inc/lin_usb.h`, `Core/Src/lin_usb.c`, config in `lin_usb_config.h`
-(`LIN_USB_CHANNEL_COUNT` 2, `LIN_USB_MAX_SCHEDULE_TABLES` 4,
-`LIN_USB_MAX_SCHEDULE_ENTRIES` 16). Host mirror: `src/driver/LindeApiDriver/lin_usb_protocol.h`
-(keep in sync by hand).
+Firmware: `Libraries/USBClasses/lin_usb.{h,c}` (USB transport) and
+`lin_usb_engine.c` (the `lin_engine_*` hooks over `LinIF`), config in
+`lin_usb_config.h`, which derives its limits from `Src/Config.h`
+(`LIN_USB_CHANNEL_COUNT` 2, `LIN_USB_MAX_SCHEDULE_TABLES` 6,
+`LIN_USB_MAX_SCHEDULE_ENTRIES` 16). Host mirror:
+`src/driver/LindeApiDriver/lin_usb_protocol.h` (keep in sync by hand).
 
 The device **schedules frames itself**: the host uploads schedule tables, starts one,
 and afterwards only updates publisher payloads and receives results.
@@ -134,19 +138,27 @@ and afterwards only updates publisher payloads and receives results.
 | bRequest | Name | Dir | `wValue` | Payload | Notes |
 |---------:|------|-----|----------|---------|-------|
 | 0 | `HOST_FORMAT`   | OUT | channel (ignored) | `lin_usb_host_config_t` (4 B) | value ignored |
-| 1 | `BAUDRATE`      | OUT | channel | `lin_usb_bus_config_t` (20 B) | baud, LIN version, break length, timebase, NAD, diag timings, `flags` (bit 0 = master) |
+| 1 | `BAUDRATE`      | OUT | channel | `lin_usb_bus_config_t` (20 B) | baud, LIN version, break length, timebase, NAD, diag timings, `flags` (bit 0 = master, bit 1 = listen-only) |
 | 2 | `MODE`          | OUT | channel | `lin_usb_mode_t` (4 B) | `mode` 0 stop / 1 start / 2 pause; on start `table_id` + `entry_count` |
-| 3 | `DEVICE_CONFIG` | IN  | –       | `lin_usb_device_config_t` (16 B) | tables per channel, baud bitmask, `icount` = channels − 1, versions, `LIN_USB_FEATURE_*` |
+| 3 | `DEVICE_CONFIG` | IN  | –       | `lin_usb_device_config_t` (16 B) | tables per channel, slots per table (`schedule_entries`), baud bitmask, `icount` = channels − 1, versions, `LIN_USB_FEATURE_*` |
 | 4 | `TIMESTAMP`     | IN  | –       | `uint32_t` | ms tick |
 | 5 | `IDENTIFY`      | OUT | channel | none (`wLength` 0) | |
 | 6 | `FRAME_CONFIG`  | OUT | channel | `lin_usb_schedule_entry_t` (16 B) | update an entry, matched by LIN ID |
 | 7 | `SCHEDULE`      | OUT | `slot << 8 \| channel` | `lin_usb_schedule_entry_t` (16 B) | install entry into `table_id` / slot |
-| 8 | `BUS_STATE`     | IN  | channel | `lin_usb_bus_state_t` (4 B) | 0 ok, 1 bus-off, 2 passive (stopped), 3 error |
+| 8 | `BUS_STATE`     | IN  | channel | `lin_usb_bus_state_t` (4 B) | `state` 0 ok, 1 bus-off, 2 passive (deprecated), 3 error, 4 stopped, 5 sleeping; `dropped` (u16) = frames lost because the device IN queue was full |
 | 9 | `SLEEP_WAKEUP`  | OUT | channel | `lin_usb_sleep_wakeup_t` (4 B) | `command` 0 sleep, 1 wakeup |
 
-`SCHEDULE` and `FRAME_CONFIG` stall if `slot >= 16`, `table_id >= 4` or `dlc` is
-outside 1–8. The slot limit is not reported by `DEVICE_CONFIG`; the host header
-defines `LIN_USB_MAX_SCHEDULE_ENTRIES` to match.
+`SCHEDULE` and `FRAME_CONFIG` ignore (without stalling) an entry with
+`slot >= LIN_USB_MAX_SCHEDULE_ENTRIES`, `table_id >= LIN_USB_MAX_SCHEDULE_TABLES`
+or a `dlc` outside 1–8; `MODE` start ignores an out-of-range `table_id` the same
+way. Both limits come from `DEVICE_CONFIG` (`schedule_tables`,
+`schedule_entries`); the host constant `LIN_USB_MAX_SCHEDULE_ENTRIES` is only a
+fallback for firmware that reports `schedule_entries = 0`.
+
+Feature bits (`lin_usb_device_config_t.features`): `SCHEDULING 0x0001`,
+`TIMESTAMP 0x0002`, `CUSTOM_BAUDRATE 0x0004`, `BUS_STATE 0x0008`,
+`LISTEN_ONLY 0x0010`. A host that wants monitor mode must check `LISTEN_ONLY`
+before setting the bus-config flag — older firmware treats it as a plain slave.
 
 Schedule entry (`lin_usb_schedule_entry_t`): `lin_id`, `direction` (0 = this node
 publishes, 1 = subscribes), `dlc`, `flags` (`LIN_USB_FRAME_FLAG_*`, e.g. sporadic),
@@ -156,7 +168,7 @@ publishes, 1 = subscribes), `dlc`, `flags` (`LIN_USB_FRAME_FLAG_*`, e.g. sporadi
 
 | Offset | Field | Type | Meaning |
 |-------:|-------|------|---------|
-| 0  | `echo_id`      | u32 | `0xFFFFFFFF` = received from bus; otherwise a published frame |
+| 0  | `echo_id`      | u32 | `0xFFFFFFFF` = received from bus; `0` = ack of a bulk-OUT set-frame (no bus event); otherwise a published frame |
 | 4  | `timestamp_ms` | u32 | device tick (IN only) |
 | 8  | `lin_id`       | u8  | frame ID (0–63) |
 | 9  | `channel`      | u8  | LIN channel index |
@@ -165,15 +177,19 @@ publishes, 1 = subscribes), `dlc`, `flags` (`LIN_USB_FRAME_FLAG_*`, e.g. sporadi
 | 12 | `data[8]`      | u8×8 | payload |
 
 Frame flags: `0x01` enhanced checksum, `0x02` subscriber, `0x04` error,
-`0x08` TX update, `0x10` sporadic, `0x20` responded, `0x40` valid checksum,
+`0x08` wakeup (device → host; `LIN_USB_FRAME_FLAG_TX_UPDATE` is the historic name
+for the same bit), `0x10` sporadic, `0x20` responded, `0x40` valid checksum,
 `0x80` sleep. On an error frame, a missing `RESPONDED` means no slave answered
 and a missing `VALID` means a checksum error.
 
 - **OUT (host → device), "set frame":** sets the payload the matching publisher
-  entry sends on its next slot. IDs not in the running schedule are ignored;
-  frames with `dlc` outside 1–8 or a bad channel are dropped.
+  entry sends on its next slot. The device answers every accepted transfer with
+  an IN frame carrying `echo_id = 0` and the unchanged payload — `FLAG_ERROR`
+  set means the LIN ID is not in the running schedule. Frames with `dlc` outside
+  1–8 or a bad channel are dropped without an ack.
 - **IN (device → host):** results of scheduled slots (published echoes and
-  subscribed responses), all channels mixed.
+  subscribed responses), sleep/wakeup events and set-frame acks, all channels
+  mixed.
 
 ### Typical open sequence (per channel)
 
@@ -196,7 +212,7 @@ reference-counts the shared device.
 
 ## aio_usb (digital I/O + analog)
 
-Firmware: `Core/Inc/aio_usb.h`, `Core/Src/aio_usb.c`, config in `aio_usb_config.h`
+Firmware: `Libraries/USBClasses/aio_usb.{h,c}`, config in `aio_usb_config.h`
 (32 I/O lines, 16 analog channels, 16-bit resolution). Host mirror:
 `src/driver/AiodeDriver/aio_usb_protocol.h`. There are no channels; `wValue`
 selects an I/O line where needed.
@@ -245,9 +261,10 @@ from CANgaroo, although the protocol addresses 32.
 
 ## Adding or changing a request
 
-1. Update the firmware header (`Core/Inc/*_usb.h`) and handler (`Core/Src/*_usb.c`):
-   check `wValue` in the SETUP stage, check payload fields in the DATA stage, and
-   return `false` to STALL on invalid input.
+1. Update the firmware header (`Libraries/USBClasses/*_usb.h`) and handler
+   (`*_usb.c`): check `wValue` in the SETUP stage and return `false` to STALL on
+   an invalid index; check payload fields in the DATA stage, where an invalid
+   value can only be ignored (the status stage is already armed).
 2. Mirror the change in the host protocol header (`lin_usb_protocol.h` /
    `aio_usb_protocol.h`); gs_usb must stay compatible with the kernel driver.
 3. Keep structures packed and the sizes identical on both sides. A size mismatch
