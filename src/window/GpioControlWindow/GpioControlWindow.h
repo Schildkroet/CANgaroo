@@ -52,7 +52,7 @@ struct GpioDevicePanel
     Source             source;
     QWidget           *container;
     QPushButton       *toggleBtn;
-    QSpinBox          *cycleSpin; // update interval in ms (5-500)
+    QSpinBox          *cycleSpin; // update interval in ms (5..provider->maxCycleMs())
     bool               enabled{false};
     QList<GpioPinRow>  pinRows;
     uint16_t           outputMask{0};

@@ -38,7 +38,9 @@ public:
     int  digitalPinCount() const override { return 16; }
     int  analogPinCount() const override { return 8; }
     QString analogUnit() const override { return QStringLiteral("mV"); }
-    void setConfig(bool enable, uint8_t cycleMs, uint16_t dirMask) override;
+    // The GrIP GPIO config carries the cycle time in one byte.
+    int maxCycleMs() const override { return 255; }
+    void setConfig(bool enable, uint16_t cycleMs, uint16_t dirMask) override;
     void setOutput(uint16_t outputMask) override;
 
 private:

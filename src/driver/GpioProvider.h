@@ -51,9 +51,12 @@ public:
     /// Unit suffix for analog values (e.g. "mV"); empty for raw counts.
     virtual QString analogUnit() const { return {}; }
 
-    /// Enable/disable reporting. @p cycleMs is the report interval in ms,
-    /// @p dirMask sets per-line direction (bit set = output).
-    virtual void setConfig(bool enable, uint8_t cycleMs, uint16_t dirMask) = 0;
+    /// Longest report interval in ms the device can be configured for.
+    virtual int maxCycleMs() const { return 500; }
+
+    /// Enable/disable reporting. @p cycleMs is the report interval in ms
+    /// (5..maxCycleMs()), @p dirMask sets per-line direction (bit set = output).
+    virtual void setConfig(bool enable, uint16_t cycleMs, uint16_t dirMask) = 0;
 
     /// Drive the output lines to the levels in @p outputMask (bit set = HIGH).
     virtual void setOutput(uint16_t outputMask) = 0;

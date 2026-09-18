@@ -21,6 +21,7 @@
 
 #include "GripGpioProvider.h"
 
+#include <algorithm>
 #include <utility>
 
 #include "driver/GrIPDriver/GrIP/GrIPHandler.h"
@@ -41,9 +42,10 @@ GripGpioProvider::GripGpioProvider(GrIPHandler *handler, QString name, QObject *
             });
 }
 
-void GripGpioProvider::setConfig(bool enable, uint8_t cycleMs, uint16_t dirMask)
+void GripGpioProvider::setConfig(bool enable, uint16_t cycleMs, uint16_t dirMask)
 {
-    _handler->GpioSetConfig(enable, cycleMs, dirMask);
+    const auto cycle = static_cast<uint8_t>(std::min<int>(cycleMs, maxCycleMs()));
+    _handler->GpioSetConfig(enable, cycle, dirMask);
 }
 
 void GripGpioProvider::setOutput(uint16_t outputMask)

@@ -236,12 +236,12 @@ CandleApiInterface::~CandleApiInterface()
 
 QString CandleApiInterface::getName() const
 {
-    return _sharedDev->productName + QString::number(_sharedDev->deviceIndex) + "_CH" + QString::number(_channel);
+    return _sharedDev->productName + QString::number(_sharedDev->deviceIndex) + "_ch" + QString::number(_channel);
 }
 
 QString CandleApiInterface::getDetailsStr() const
 {
-    return _sharedDev->productName + " CH" + QString::number(_channel)
+    return _sharedDev->productName + " ch" + QString::number(_channel)
            + " | " + QString::fromStdWString(getPath());
 }
 
@@ -634,9 +634,9 @@ bool CandleApiInterface::takeConfirmedTx(const candle_fd_frame_t &echo, BusMessa
 
     QMutexLocker lock(&_txMutex);
 
-    // Echoes arrive in transmit order, but the device may have dropped a frame
-    // without echoing it (channel restart, overflow): match by content and
-    // count older, never confirmed entries as TX errors.
+    // Match by content only. Controllers that arbitrate their TX mailboxes by
+    // ID priority echo out of send order, so older unmatched entries are not
+    // failures; frames that are never echoed age out via MaxPendingTx.
     for (int i = 0; i < _pendingTx.size(); i++) {
         const BusMessage &p = _pendingTx.at(i);
         const uint8_t sentLen = p.isFD() ? p.getLength() : std::min(p.getLength(), static_cast<uint8_t>(8u));
@@ -658,8 +658,7 @@ bool CandleApiInterface::takeConfirmedTx(const candle_fd_frame_t &echo, BusMessa
         }
 
         txMsg = p;
-        _numTxErr += static_cast<uint64_t>(i);
-        _pendingTx.erase(_pendingTx.begin(), _pendingTx.begin() + i + 1);
+        _pendingTx.removeAt(i);
         return true;
     }
     return false;

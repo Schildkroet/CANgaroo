@@ -353,7 +353,7 @@ int AiodeApi::analogPinCount() const
     return std::min<int>(16, caps_.analog_count);
 }
 
-void AiodeApi::setConfig(bool enable, uint8_t cycleMs, uint16_t dirMask)
+void AiodeApi::setConfig(bool enable, uint16_t cycleMs, uint16_t dirMask)
 {
     // Stop the poll thread first so reconfiguration owns the USB exclusively.
     stopPolling();

@@ -7,6 +7,7 @@ CAN bus analyzer and trace tool built with Qt6 and C++.
 - **qmake** (not CMake) with `.pro` / `.pri` files
 - Entry point: `src/src.pro`
 - Requires **Qt 6** (Widgets, Xml, Charts, SerialPort, SerialBus, Network)
+- Requires **libusb-1.0** via pkg-config on all platforms (LindeAPI and aiode drivers are always built)
 - Version is defined in `src/src.pro` via `VERSION = x.y.z`
 
 ### Build (Linux)
@@ -91,6 +92,7 @@ qmake6 CONFIG+=kvaser CONFIG+=peakcan
 | GrIP          | All      | Serial port based                          |
 | CANBlaster    | All      | UDP based                                  |
 | CandleAPI     | Windows  | gs_usb devices                             |
+| LindeAPI      | All      | lin_usb LIN adapter, libusb-1.0            |
 | PeakCAN       | Windows  | Requires `CONFIG+=peakcan`                 |
 | Kvaser        | All      | Requires `CONFIG+=kvaser` + CANlib SDK     |
 | Vector        | All      | Qt SerialBus plugin (`vectorcan`)          |

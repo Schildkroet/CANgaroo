@@ -16,17 +16,19 @@
 | **CANblaster** | ✅ | ✅ | UDP-based remote CAN via [CANblaster](https://github.com/OpenAutoDiagLabs/CANblaster) |
 | **GrIP** | ✅ | ✅ | GrIP protocol |
 | **lin_usb (LindeAPI)** | ✅ | ✅ | USB LIN adapter (VID `0x1d50` / PID `0x606f`). Multi-channel. Master, slave, and monitor modes. Hardware LIN scheduling via LDF. |
+| **aio_usb (aiode)** | ✅ | ✅ | Digital I/O and analog inputs on the same USB adapter (VID `0x1d50` / PID `0x606f`), controlled from the GPIO Control window |
 | **zscanfd** | ✅ | ✅ | Zilogic _USB to CAN Adapter_ and _USB to CAN FD Adapter_ via zscanfd driver (CONFIG+=zscanfd) in windows (zscanfd.dll required at runtime) and Linux support via SocketCAN |
 
 ## ⚙️ Features
 
 *   **Real-time CAN/CAN-FD/LIN Decoding**: Support for standard CAN, high-speed CAN-FD, and LIN bus frames.
-*   **Wide Hardware Compatibility**: Works with **SocketCAN** (Linux), **PEAK PCAN**, **Kvaser**, **Vector**, **TinyCAN**, **CANable**, **Candlelight**, **SLCAN**, **CANblaster** (UDP) and **Zilogic USB to CAN FD Adaptor**.
+*   **Wide Hardware Compatibility**: Works with **SocketCAN** (Linux), **PEAK PCAN**, **Kvaser**, **Vector**, **TinyCAN**, **CANable**, **Candlelight**, **SLCAN**, **CANblaster** (UDP), **GrIP**, **lin_usb** (LIN) and **Zilogic USB to CAN FD Adaptor**.
 *   **DBC & LDF Database Support**: Load multiple `.dbc` files for CAN signal decoding and `.ldf` files for LIN bus signal decoding.
 *   **Powerful Data Visualization**: Integrated Graphing tools supporting Time-series, Scatter charts, Text-based monitoring, and interactive Gauge views with zoom and live tooltips. Supports both CAN and LIN signals.
 *   **Advanced Filtering & Logging**: Isolate critical data with live filters and export captures for offline analysis.
 *   **Network Rights Management**: Per-network access control for bus interfaces.
 *   **Python Scripting**: Built-in script editor with an embedded Python interpreter (via pybind11). Send and receive CAN and LIN messages, decode signals using loaded DBC/LDF files, and automate tasks. Scripts can be started manually or automatically with the measurement. Ready-to-use example scripts are included in the `examples/` directory.
+*   **GPIO Control**: Configure digital lines as inputs or outputs, switch outputs and watch input levels and analog values live on aio_usb and GrIP devices.
 *   **CAN Gateway**: Forward messages between two CAN interfaces with configurable per-message filter rules. Active during a running measurement.
 *   **LIN Control**: Send LIN Sleep/Wakeup commands, switch schedule tables, and issue LIN diagnostic requests and responses (slave node) on LIN-capable interfaces directly from the UI.
 *   **Trace Replay**: Replay captured CAN logs (Vector ASC, candump, PCAP, and PCAPng formats) with adjustable speed, per-message RX/TX direction filtering, channel mapping to live interfaces, and optional autoplay with the measurement. Supports classic CAN, CAN-FD, RTR, and error frames.
@@ -49,9 +51,9 @@
 
 | Distribution | Command |
 | :--- | :--- |
-| **Ubuntu / Debian** | `sudo apt install build-essential qt6-base-dev qt6-charts-dev qt6-serialport-dev qt6-serialbus-dev qt6-svg-dev qt6-tools-dev qt6-l10n-tools libqt6opengl6-dev libnl-3-dev libnl-route-3-dev python3-dev pybind11-dev pkg-config` |
-| **Fedora** | `sudo dnf install gcc-c++ make qt6-qtbase-devel qt6-qtcharts-devel qt6-qtserialport-devel qt6-qtserialbus-devel qt6-qtsvg-devel qt6-qttools-devel libnl3-devel python3-devel pybind11-devel pkgconfig` |
-| **Arch Linux** | `sudo pacman -S base-devel qt6-base qt6-charts qt6-serialport qt6-serialbus qt6-svg qt6-tools libnl python pybind11 pkgconf` |
+| **Ubuntu / Debian** | `sudo apt install build-essential qt6-base-dev qt6-charts-dev qt6-serialport-dev qt6-serialbus-dev qt6-svg-dev qt6-tools-dev qt6-l10n-tools libqt6opengl6-dev libnl-3-dev libnl-route-3-dev libusb-1.0-0-dev python3-dev pybind11-dev pkg-config` |
+| **Fedora** | `sudo dnf install gcc-c++ make qt6-qtbase-devel qt6-qtcharts-devel qt6-qtserialport-devel qt6-qtserialbus-devel qt6-qtsvg-devel qt6-qttools-devel libnl3-devel libusb1-devel python3-devel pybind11-devel pkgconfig` |
+| **Arch Linux** | `sudo pacman -S base-devel qt6-base qt6-charts qt6-serialport qt6-serialbus qt6-svg qt6-tools libnl libusb python pybind11 pkgconf` |
 
 #### Build:
 
@@ -84,7 +86,7 @@ sudo setcap cap_net_admin+ep /sbin/ip
 
 #### USB device permissions (udev rules)
 
-Devices accessed directly via libusb (gs_usb / Candlelight, lin_usb / LindeAPI) need a udev rule so that regular users can open them without `sudo`.
+Devices accessed directly via libusb (gs_usb / Candlelight, lin_usb / LindeAPI, aio_usb) need a udev rule so that regular users can open them without `sudo`.
 
 Create `/etc/udev/rules.d/99-cangaroo.rules`:
 
@@ -107,6 +109,7 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 
 * Install [Qt 6](https://www.qt.io/download-qt-installer) (Community / Open Source) including the **Qt Serial Bus** component.
 * Install [Python 3](https://www.python.org/downloads/) and [pybind11](https://github.com/pybind/pybind11) (`pip install pybind11`).
+* Install [libusb 1.0](https://libusb.info/) so that `pkg-config libusb-1.0` finds it (needed by the lin_usb and aio_usb drivers). With MSYS2: `pacman -S mingw-w64-x86_64-libusb`.
 * Open `cangaroo.pro` in Qt Creator and build.
 
 #### Deployment
@@ -115,6 +118,7 @@ Include the required Qt6 libraries or run `windeployqt` on the `.exe`:
 ```
 windeployqt --release cangaroo.exe
 ```
+Also ship `libusb-1.0.dll` next to the `.exe`.
 
 ### Optional hardware drivers
 

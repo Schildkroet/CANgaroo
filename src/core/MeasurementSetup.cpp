@@ -147,6 +147,8 @@ void MeasurementSetup::endDatabaseReload()
 CanDbMessage *MeasurementSetup::findDbMessage(const BusMessage &msg) const
 {
     if (msg.busType() != BusType::CAN) return nullptr;
+    // Error frames carry no CAN ID (drivers set it to 0): never match a DBC entry.
+    if (msg.isErrorFrame()) return nullptr;
     auto it = _messageCache.constFind(msg.getRawId());
     if (it != _messageCache.constEnd()) {
         return it.value();

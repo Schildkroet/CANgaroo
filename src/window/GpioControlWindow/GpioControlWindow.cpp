@@ -157,7 +157,7 @@ void GpioControlWindow::removePanels(GpioDevicePanel::Source source)
             continue;
 
         if (panel->enabled)
-            panel->provider->setConfig(false, static_cast<uint8_t>(panel->cycleSpin->value()), panel->dirMask);
+            panel->provider->setConfig(false, static_cast<uint16_t>(panel->cycleSpin->value()), panel->dirMask);
 
         _panels.remove(it.key());
         const int tabIdx = _tabs->indexOf(panel->container);
@@ -211,7 +211,7 @@ void GpioControlWindow::buildDevicePanel(GpioProvider *provider, GpioDevicePanel
     auto *cycleLabel = new QLabel(tr("Update interval (ms):"), cfgBar);
 
     panel->cycleSpin = new QSpinBox(cfgBar);
-    panel->cycleSpin->setRange(5, 500);
+    panel->cycleSpin->setRange(5, provider->maxCycleMs());
     panel->cycleSpin->setValue(50);
     panel->cycleSpin->setToolTip(tr("How often the device reports GPIO state (minimum 5 ms)"));
 
@@ -342,7 +342,7 @@ void GpioControlWindow::onToggleClicked(GpioDevicePanel *panel)
 
     panel->provider->setConfig(
         panel->enabled,
-        static_cast<uint8_t>(panel->cycleSpin->value()),
+        static_cast<uint16_t>(panel->cycleSpin->value()),
         panel->dirMask);
 }
 

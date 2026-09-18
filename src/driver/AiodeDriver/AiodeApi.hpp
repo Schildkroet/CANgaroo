@@ -65,7 +65,7 @@ public:
     QString name() const override { return name_; }
     int  digitalPinCount() const override;
     int  analogPinCount() const override;
-    void setConfig(bool enable, uint8_t cycleMs, uint16_t dirMask) override;
+    void setConfig(bool enable, uint16_t cycleMs, uint16_t dirMask) override;
     void setOutput(uint16_t outputMask) override;
 
     const std::string &lastError() const { return last_error_; }

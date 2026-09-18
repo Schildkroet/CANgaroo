@@ -232,8 +232,10 @@ void AggregatedTraceViewModel::afterClear()
 
 AggregatedTraceViewModel::unique_key_t AggregatedTraceViewModel::makeUniqueKey(const BusMessage &msg) const
 {
-    // Bit 63: RX flag; bits 32-47: interface ID; bit 30: bus type (1=LIN); bits 0-29: frame ID
+    // Bit 63: RX flag; bit 62: error frame; bits 32-47: interface ID; bit 30: bus type (1=LIN);
+    // bits 0-29: frame ID. Error frames have ID 0, the error bit keeps them apart from real 0x000.
     return  static_cast<uint64_t>(msg.isRX()) << 63
+          | static_cast<uint64_t>(msg.isErrorFrame()) << 62
           | static_cast<uint64_t>(msg.getInterfaceId()) << 32
           | static_cast<uint64_t>(static_cast<uint8_t>(msg.busType())) << 30
           | (static_cast<uint64_t>(msg.getRawId()) & 0x3FFFFFFFull);

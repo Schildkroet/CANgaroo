@@ -81,7 +81,7 @@ jobs:
           qt6-base-dev qt6-base-private-dev qt6-tools-dev \
           qt6-serialport-dev qt6-serialbus-dev qt6-charts-dev qt6-svg-dev \
           adwaita-qt6 libadwaitaqt6-1 pybind11-dev \
-          libnl-3-dev libnl-route-3-dev libgl1-mesa-dev fuse libfuse2 wget
+          libnl-3-dev libnl-route-3-dev libusb-1.0-0-dev libgl1-mesa-dev fuse libfuse2 wget
 
     - name: Verify Qt6 and Adwaita installation
       run: |
@@ -164,7 +164,7 @@ jobs:
           Section: utils
           Priority: optional
           Architecture: ${PKG_ARCH}
-          Depends: libqt6core6t64, libqt6gui6t64, libqt6widgets6t64, libqt6serialport6, libqt6serialbus6, libqt6charts6, libnl-3-200, libnl-route-3-200, policykit-1, iproute2
+          Depends: libqt6core6t64, libqt6gui6t64, libqt6widgets6t64, libqt6serialport6, libqt6serialbus6, libqt6charts6, libnl-3-200, libnl-route-3-200, libusb-1.0-0, policykit-1, iproute2
           Maintainer: Schildkroet <https://github.com/Schildkroet>
           Description: CAN bus analyzer and visualization tool
            CANgaroo is an open-source CAN bus analyzer with support for
@@ -208,7 +208,7 @@ jobs:
         # deps plus the Adwaita QStyle (forward-compatible: a 6.4 style plugin
         # loads under the bundled 6.8) and Wayland dev libs for the decoration.
         sudo apt install -y build-essential git cmake ninja-build pkg-config \
-          libnl-3-dev libnl-route-3-dev libgl1-mesa-dev pybind11-dev \
+          libnl-3-dev libnl-route-3-dev libusb-1.0-0-dev libgl1-mesa-dev pybind11-dev \
           libwayland-dev wayland-protocols libxkbcommon-dev \
           adwaita-qt6 libadwaitaqt6-1 \
           fuse libfuse2 wget patchelf
@@ -420,6 +420,7 @@ jobs:
             mingw-w64-x86_64-ntldd
             mingw-w64-x86_64-python
             mingw-w64-x86_64-pybind11
+            mingw-w64-x86_64-libusb
             git
 
       - name: Download PCAN-Basic SDK
