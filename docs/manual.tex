@@ -132,7 +132,8 @@
   \textcolor{canblue}{\rule{0.6\textwidth}{1.5pt}}\\[3em]
 
   {\LARGE\bfseries User Manual}\\[1em]
-  {\large Version 0.2}\\[4em]
+  {\large Manual Version 0.3}\\[0.5em]
+  {\large for CANgaroo 0.7.0}\\[4em]
 
   {\large Open-source automotive bus analysis software}\\[0.5em]
   {\large for CAN, CAN-FD, and LIN}\\[5em]
@@ -165,6 +166,9 @@ and logging CAN, CAN-FD, and LIN bus traffic.
   \item DBC and LDF database loading for signal decoding
   \item Live signal graph with time series, scatter, gauge, and text visualizations
   \item Manual and cyclic message transmission (TX Generator)
+  \item Continuous recording of all traffic to ASC, candump or PCAPng files, with file splitting
+  \item LIN master, slave and monitor operation on USB LIN adapters, with hardware scheduling from LDF
+  \item GPIO control of digital and analog I/O on USB and GrIP adapters
   \item File replay with speed control and channel mapping
   \item Python scripting engine for automation and custom logic
   \item Protocol decoders for UDS (ISO-TP) and J1939
@@ -203,8 +207,10 @@ the archive. No compilation is required.
 To build from source, install the required Qt6 libraries and build tools:
 
 \begin{lstlisting}[language=bash, caption={Build on Linux}]
-sudo apt install qt6-base-dev qt6-serialport-dev qt6-serialbus-dev \
-     qt6-charts-dev libnl-3-dev libnl-route-3-dev
+sudo apt install build-essential qt6-base-dev qt6-serialport-dev \
+     qt6-serialbus-dev qt6-charts-dev qt6-svg-dev qt6-tools-dev \
+     libnl-3-dev libnl-route-3-dev libusb-1.0-0-dev \
+     python3-dev pybind11-dev pkg-config
 
 git clone https://github.com/Schildkroet/CANgaroo.git
 cd CANgaroo/src
@@ -215,7 +221,9 @@ make -j$(nproc)
 
 \subsection{Windows (Build from Source)}
 
-For a custom build with optional drivers:
+Install Qt~6 (including Qt Serial Bus), Python~3 and pybind11. The USB LIN and
+I/O drivers use the WinUSB driver built into Windows, so no USB library has to
+be installed. For a custom build with optional drivers:
 
 \begin{lstlisting}[language=bash, caption={Optional driver flags}]
 # Enable PEAK CAN driver
@@ -339,8 +347,16 @@ with it. These files provide the signal and message definitions needed for decod
   SLCAN           & All      & Serial Line CAN. Communicates with CAN adapters
                                that use the SLCAN ASCII protocol over a serial port. \\[0.4em]
   GrIP            & All      & Custom GrIP protocol adapter over serial or network. \\[0.4em]
-  CandleAPI       & All      & USB CAN adapters based on the \textit{gs\_usb} protocol
-                               (Geschwister Schneider USB/CAN adapters, CANtact, etc.). \\[0.4em]
+  CandleAPI       & Windows  & USB CAN adapters based on the \textit{gs\_usb} protocol
+                               (candleLight, CANable, CANtact, etc.), including CAN-FD
+                               and multi-channel devices. On Linux the same adapters
+                               appear as SocketCAN interfaces. Transmitted frames are
+                               shown once the adapter confirms them. \\[0.4em]
+  LindeAPI        & All      & USB LIN adapter (\textit{lin\_usb}, VID \texttt{0x1d50} /
+                               PID \texttt{0x606f}). Multi-channel; master, slave and
+                               monitor modes; schedule tables from the LDF run on the
+                               adapter. Interfaces are named
+                               \texttt{Linde<device>\_CH<channel>}. \\[0.4em]
   CANBlaster      & All      & Built-in virtual loopback / message generator for
                                development and testing. Enable via
                                \menu{Measurement \textrightarrow{} Driver \textrightarrow{} CANblaster}. \\[0.4em]
@@ -354,6 +370,32 @@ with it. These files provide the signal and message definitions needed for decod
                                \menu{Measurement \textrightarrow{} Driver \textrightarrow{} TinyCAN}. \\
   \bottomrule
 \end{longtable}
+
+\subsection{CAN Interface Options}
+
+\ui{Auto-Restart on Bus-Off Condition} lets the interface recover from bus-off
+by itself. The option can only be selected when the driver supports it
+(e.g.\ SocketCAN, and Candle adapters whose firmware reports the feature).
+
+\subsection{LIN Interface Options}
+\label{sec:linsetup}
+
+For LIN interfaces, the \ui{LIN Configuration} page sets the LDF file, baud rate,
+protocol version and schedule table. \ui{Node Mode} selects whether CANgaroo acts
+as \ui{Master} (runs the schedule table) or \ui{Slave} (answers the frames it
+publishes). \ui{Listen Only} turns a slave into a pure bus monitor, if the
+adapter supports it. \ui{Use Classic Checksum} forces the LIN~1.x checksum.
+
+\subsection{USB Device Permissions}
+
+\begin{description}[leftmargin=2em, style=nextline]
+  \item[Linux] Adapters accessed directly over USB (gs\_usb, lin\_usb, aio\_usb) need
+        a udev rule so that normal users can open them. The rule is listed in the
+        \file{README.md}; after adding it, reload the rules and re-plug the adapter.
+  \item[Windows] The adapter installs the WinUSB driver automatically for each of its
+        interfaces. CAN, LIN and I/O can be used at the same time, but each interface
+        can only be opened by one program at a time.
+\end{description}
 
 \subsection{Starting and Stopping a Measurement}
 
@@ -414,6 +456,13 @@ Three timestamp modes are available via the column header or toolbar:
   \item \textbf{Delta} — time since the previous frame of the same ID.
 \end{itemize}
 
+\subsubsection{Error Frames}
+
+Error frames are shown in red. The data column lists the decoded error flags
+(e.g.\ bus-off, error passive, ACK, CRC, stuff error) instead of payload bytes.
+Error frames carry no real CAN ID: they are never decoded with a DBC message and
+get their own row in aggregated mode, separate from frames with ID \texttt{0x000}.
+
 \subsubsection{Clearing the Trace}
 
 Press \key{Esc} or use \menu{Trace \textrightarrow{} Clear} to clear all captured messages
@@ -427,7 +476,11 @@ The Log View (\key{Ctrl+Shift+L}) displays application-level diagnostic messages
 \begin{itemize}
   \item Click \ui{Clear} to empty the log.
   \item Use \ui{Export} to save the log contents to a file.
+  \item Long messages can be read in full using the horizontal scrollbar.
 \end{itemize}
+
+When a measurement starts, the log lists every opened interface with its firmware
+version, where the adapter reports one (e.g.\ \texttt{0.1.0 (HW 2)} for lin\_usb).
 
 \subsection{Graph View}
 \label{sec:graph}
@@ -595,7 +648,19 @@ The view is split into two panes:
         from and saved to a \file{.py} file using the \ui{Load} / \ui{Save} buttons.
   \item[Console (bottom)] Captures all \texttt{print()} output and exception
         tracebacks from the running script. Click \ui{Clear} to empty it.
+  \item[Input line] Below the console. While a script runs, text typed here and
+        confirmed with \key{Enter} is passed to the script, so \texttt{input()} and
+        \texttt{sys.stdin.readline()} work as in a terminal. The entered text is
+        echoed in the console with a \texttt{>} prefix. Stopping the script ends
+        a pending \texttt{input()} call.
 \end{description}
+
+\begin{lstlisting}[language=Python, caption={Asking the user for a value}]
+import cangaroo
+
+node = int(input("Node ID (hex): "), 16)
+print(f"Using node 0x{node:02X}")
+\end{lstlisting}
 
 The \ui{Auto-run} checkbox causes the script to start automatically each time a
 measurement begins. \ui{Run} and \ui{Stop} control the script manually.
@@ -1008,6 +1073,76 @@ When the replay file was recorded on different interface names than those curren
 active, use the channel mapping table to redirect each recorded channel to an
 available hardware channel.
 
+\subsection{LIN Control View}
+\label{sec:lincontrol}
+
+The LIN Control View (\menu{Window \textrightarrow{} New \textrightarrow{} LIN Control})
+sends LIN bus commands and diagnostic requests without writing a script.
+
+\subsubsection{Sleep and Wakeup}
+
+While a measurement is running, the upper part lists every LIN interface of the
+setup with two buttons:
+
+\begin{description}[leftmargin=2em, style=nextline]
+  \item[Sleep] Sends the go-to-sleep command on that interface.
+  \item[Wakeup] Sends a wakeup signal on that interface.
+\end{description}
+
+The list is filled when the measurement starts and cleared when it stops. Without a
+running measurement, or without LIN interfaces in the setup, the view shows
+\textit{No LIN interfaces configured}.
+
+\subsubsection{Diagnostic Requests}
+
+The lower part holds a list of diagnostic requests (master request frames,
+Section~\ref{sec:lindiag}). Each entry is shown as \texttt{[interface]~name}.
+
+\begin{itemize}
+  \item \ui{Add\ldots} opens a dialog with:
+    \begin{description}[leftmargin=1.5em, style=nextline]
+      \item[Name] A label for the list, e.g.\ \textit{Read Product ID}.
+      \item[Interface] The LIN interface to send on.
+      \item[NAD] Node address of the target slave (hexadecimal).
+      \item[Data (SID + params)] Up to 6 hex bytes starting with the service ID,
+            e.g.\ \texttt{22 F1 90}. Do not include the PCI byte; CANgaroo adds it.
+    \end{description}
+  \item \ui{Edit\ldots} and \ui{Remove} change or delete the selected entry.
+  \item \textbf{Double-click} an entry to send it. Requests can only be sent while
+        a measurement is running; the slave's response appears in the Trace View.
+\end{itemize}
+
+The request list is saved with the workspace.
+
+\subsection{GPIO Control View}
+\label{sec:gpio}
+
+The GPIO Control View (\menu{Window \textrightarrow{} New \textrightarrow{} GPIO Control})
+reads and drives the digital and analog I/O lines of supported adapters. Each device
+gets its own tab:
+
+\begin{itemize}
+  \item \textbf{aio\_usb} adapters (the I/O interface of the USB LIN/CAN adapter) are
+        found when the view opens. Click \ui{Rescan devices} after plugging one in.
+  \item \textbf{GrIP} adapters appear while their interface is part of a running
+        measurement.
+\end{itemize}
+
+For each device:
+
+\begin{enumerate}
+  \item Set every pin's \ui{Direction} to \ui{Input} or \ui{Output}.
+  \item Choose the \ui{Update interval (ms)}, i.e.\ how often the device reports its
+        state (minimum 5\,ms; up to 500\,ms for aio\_usb and 255\,ms for GrIP).
+  \item Click \ui{Enable}. Direction and interval are locked until you click
+        \ui{Disable}.
+\end{enumerate}
+
+While enabled, the \ui{Digital} column shows each line as HIGH or LOW, and the
+\ui{Analog} column shows the measured value for lines with an analog input
+(\texttt{N/A} otherwise). Output pins are switched with \ui{Set HIGH} /
+\ui{Set LOW}.
+
 % ══════════════════════════════════════════════════════════════════════════════
 \section{Database Support}
 
@@ -1039,6 +1174,7 @@ LDF (\textit{LIN Description File}) describes LIN bus networks. The parser suppo
 \end{itemize}
 
 \subsection{LIN Diagnostics}
+\label{sec:lindiag}
 
 LIN-capable interfaces expose a diagnostics API for node configuration and
 identification (as defined by LIN specification section~4.2).
@@ -1111,6 +1247,34 @@ The J1939 decoder handles the higher-layer protocol used in commercial vehicles.
 Use \menu{Trace \textrightarrow{} Save Trace to File} to write all currently buffered
 messages to a file. A format selection dialog lets you choose the output format.
 
+\subsection{Recording to File}
+\label{sec:record}
+
+\menu{Measurement \textrightarrow{} Record Trace to File} (\key{Ctrl+R}, or the
+\ui{Record} toolbar button) writes every frame to disk while the measurement runs.
+Unlike \menu{Save Trace to File}, recording is not limited by the in-memory trace
+size, so it suits long measurements.
+
+Recording starts with the next measurement, or immediately if one is already
+running. The status bar shows whether recording is armed or active. Settings are
+made in \menu{Measurement \textrightarrow{} Recording Options\ldots}:
+
+\begin{description}[leftmargin=2em, style=nextline]
+  \item[Folder] Target directory. \menu{Open Recording Folder} (from the arrow next
+        to the \ui{Record} button) opens it in the file manager.
+  \item[File name] Name pattern with the placeholders \texttt{\{date\}} and
+        \texttt{\{time\}} (recording start) and \texttt{\{index\}} (file number when
+        splitting). The dialog shows an example name.
+  \item[Format] Vector ASC, Linux candump or PCAPng.
+  \item[Split Files] Start a new file every $n$\,MB. Each part is a complete,
+        valid file in the chosen format.
+  \item[Record every measurement] Keeps recording armed after a measurement stops,
+        so every following measurement is recorded too. Otherwise recording ends
+        with the measurement.
+\end{description}
+
+Changed options apply from the next recording.
+
 \subsection{Supported Export Formats}
 
 \begin{longtable}{p{3cm} p{2.5cm} p{7.5cm}}
@@ -1134,6 +1298,9 @@ messages to a file. A format selection dialog lets you choose the output format.
                                       blocks. Modern Wireshark format. \\
   \bottomrule
 \end{longtable}
+
+All export formats are checked against independent readers (python-can, scapy and
+asammdf) as part of the CANgaroo test suite.
 
 \subsection{Full Trace Export and Import}
 
@@ -1231,6 +1398,11 @@ preferences. The dialog is organised into four groups.
     Preferred save format
       & Pre-selects the output format in the \menu{Save Trace} dialog.
         Choices: Vector ASC, Vector MDF4, Linux candump, PCAP, PCAPng. \\
+    Max trace size
+      & Maximum number of messages kept in memory (default 50\,000). When
+        exceeded, the oldest messages are discarded and are missing from saved
+        traces. Use \menu{Record Trace to File} (Section~\ref{sec:record}) to
+        keep everything. \\
     \bottomrule
   \end{tabularx}
 \end{table}
@@ -1265,6 +1437,7 @@ preferences. The dialog is organised into four groups.
   \key{Ctrl+S}           & Save Workspace \\
   \key{Ctrl+Shift+S}     & Save Workspace As \\
   \key{Ctrl+Alt+S}       & Setup Interface \\
+  \key{Ctrl+R}           & Record Trace to File (toggle) \\
   \key{Ctrl+Shift+T}     & New Trace View \\
   \key{Ctrl+Shift+L}     & New Log View \\
   \key{Ctrl+Shift+G}     & New Graph View \\
@@ -1317,6 +1490,26 @@ preferences. The dialog is organised into four groups.
   \item Click \ui{Play}.
 \end{enumerate}
 
+\subsection{Send a LIN Diagnostic Request}
+
+\begin{enumerate}
+  \item Add a LIN interface in the Setup Dialog, set \ui{Node Mode} to \ui{Master}
+        and load the LDF (Section~\ref{sec:linsetup}).
+  \item Open a LIN Control View and click \ui{Add\ldots}. Enter the NAD and the
+        service bytes, e.g.\ \texttt{22 F1 90}.
+  \item Press \key{F5}, then double-click the request. The response frame appears
+        in the Trace View.
+\end{enumerate}
+
+\subsection{Record a Long Measurement}
+
+\begin{enumerate}
+  \item Open \menu{Measurement \textrightarrow{} Recording Options\ldots}, choose a
+        folder and format, and optionally enable \ui{Split Files}.
+  \item Press \key{Ctrl+R} to arm recording.
+  \item Press \key{F5}. All traffic is written to disk until the measurement stops.
+\end{enumerate}
+
 \subsection{Automate with Python}
 
 \begin{enumerate}
@@ -1360,6 +1553,11 @@ preferences. The dialog is organised into four groups.
     Ensure the file extension matches one of the supported formats (\file{.log},
     \file{.asc}, \file{.pcap}, \file{.pcapng}). Check the Log View for parsing
     error messages.
+
+  \item[USB adapter: ``permission denied'' or ``interface is in use'']
+    On Linux, add the udev rule from \file{README.md} and re-plug the adapter.
+    On Windows, check in Device Manager that the adapter's interfaces use the WinUSB
+    driver, and close other programs that may hold the same interface.
 
   \item[Application crashes on start]
     Delete the workspace XML file and restart. If the crash persists, launch from
