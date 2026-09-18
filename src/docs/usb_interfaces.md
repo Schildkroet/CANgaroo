@@ -152,7 +152,7 @@ and afterwards only updates publisher payloads and receives results.
 | 0 | `HOST_FORMAT`   | OUT | channel (ignored) | `lin_usb_host_config_t` (4 B) | value ignored |
 | 1 | `BAUDRATE`      | OUT | channel | `lin_usb_bus_config_t` (20 B) | baud, LIN version, break length, timebase, NAD, diag timings, `flags` (bit 0 = master, bit 1 = listen-only) |
 | 2 | `MODE`          | OUT | channel | `lin_usb_mode_t` (4 B) | `mode` 0 stop / 1 start / 2 pause; on start `table_id` + `entry_count` |
-| 3 | `DEVICE_CONFIG` | IN  | –       | `lin_usb_device_config_t` (16 B) | tables per channel, slots per table (`schedule_entries`), baud bitmask, `icount` = channels − 1, versions, `LIN_USB_FEATURE_*` |
+| 3 | `DEVICE_CONFIG` | IN  | –       | `lin_usb_device_config_t` (16 B) | tables per channel, slots per table (`schedule_entries`), baud bitmask, `icount` = channels − 1, `sw_version` (`major << 16 \| minor << 8 \| patch`), `hw_version` (plain number), `LIN_USB_FEATURE_*` |
 | 4 | `TIMESTAMP`     | IN  | –       | `uint32_t` | ms tick |
 | 5 | `IDENTIFY`      | OUT | channel | none (`wLength` 0) | |
 | 6 | `FRAME_CONFIG`  | OUT | channel | `lin_usb_schedule_entry_t` (16 B) | update an entry, matched by LIN ID |

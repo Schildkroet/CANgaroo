@@ -51,6 +51,8 @@ bool LindeSharedDevice::open()
     scheduleEntries = dcfg.schedule_entries ? dcfg.schedule_entries
                                             : static_cast<uint8_t>(LIN_USB_MAX_SCHEDULE_ENTRIES);
     features       = dcfg.features;
+    swVersion      = dcfg.sw_version;
+    hwVersion      = dcfg.hw_version;
 
     {
         QMutexLocker lock(&queueMutex);
@@ -74,6 +76,8 @@ void LindeSharedDevice::close()
     scheduleTables  = 0;
     scheduleEntries = 0;
     features        = 0;
+    swVersion       = 0;
+    hwVersion       = 0;
 }
 
 // ---- Reader thread ----

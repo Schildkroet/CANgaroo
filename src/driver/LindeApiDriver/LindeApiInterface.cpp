@@ -43,6 +43,19 @@ QString LindeApiInterface::getDetailsStr() const
     return QStringLiteral("LIN Interface CH%1").arg(_channel);
 }
 
+QString LindeApiInterface::getVersion()
+{
+    // Reported by DEVICE_CONFIG on open; before that the device is not queried.
+    if (!_sharedDev->usb.isOpen())
+        return BusInterface::getVersion();
+    const uint32_t sw = _sharedDev->swVersion; // major << 16 | minor << 8 | patch
+    return QStringLiteral("%1.%2.%3 (HW %4)")
+        .arg((sw >> 16) & 0xFFu)
+        .arg((sw >> 8) & 0xFFu)
+        .arg(sw & 0xFFu)
+        .arg(_sharedDev->hwVersion);
+}
+
 void LindeApiInterface::applyConfig(const MeasurementInterface &mi)
 {
     _settings = mi;

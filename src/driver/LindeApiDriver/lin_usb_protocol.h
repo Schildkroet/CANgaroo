@@ -130,8 +130,8 @@ typedef struct
     uint8_t  supported_baudrates;
     uint8_t  schedule_entries;   /* slots per schedule table (0 = older firmware) */
     uint8_t  icount;
-    uint32_t sw_version;
-    uint32_t hw_version;
+    uint32_t sw_version;         /* major << 16 | minor << 8 | patch */
+    uint32_t hw_version;         /* hardware revision, plain number */
     uint32_t features;
 } lin_usb_device_config_t;
 

@@ -41,6 +41,8 @@ struct LindeSharedDevice
     uint8_t               scheduleTables{0};  // per channel, as reported by the device
     uint8_t               scheduleEntries{0}; // slots per table, as reported by the device
     uint32_t              features{0};       // LIN_USB_FEATURE_* bitmask
+    uint32_t              swVersion{0};      // firmware version from DEVICE_CONFIG, major << 16 | minor << 8 | patch
+    uint32_t              hwVersion{0};      // hardware revision from DEVICE_CONFIG
 
     QString productName{"Linde"};
     int     deviceIndex{0};   // n-th lin_usb device exposing the LIN interface

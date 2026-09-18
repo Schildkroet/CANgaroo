@@ -22,6 +22,7 @@ public:
 
     QString getName()       const override;
     QString getDetailsStr() const override;
+    QString getVersion() override;
     BusType busType()       const override { return BusType::LIN; }
 
     void     applyConfig(const MeasurementInterface &mi) override;
