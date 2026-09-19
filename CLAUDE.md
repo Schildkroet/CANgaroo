@@ -143,6 +143,8 @@ src/
   helpers/       — utility code
   mainwindow.*   — application shell, driver registration, menu actions
 examples/        — Python scripting example scripts
+firmware/        — STM32G4 reference firmware (gs_usb/lin_usb/aio_usb device side) + libusb SampleApp;
+                   standalone STM32CubeIDE/CMake projects, not part of the qmake build
 tests/           — Qt Test unit tests (opt-in build)
 ```
 

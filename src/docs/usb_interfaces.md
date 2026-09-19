@@ -4,6 +4,12 @@ The STM32G473 adapter firmware enumerates as **one composite USB device** with u
 vendor-specific interfaces. Each interface has its own bulk endpoint pair and its
 own host driver in CANgaroo.
 
+A bare STM32CubeIDE reference implementation of the device side (USB transport
+only, weak no-op engine hooks) plus a standalone libusb host sample lives in
+[`firmware/STM32G4_TinyUSB_CanLinAio/`](../../firmware/STM32G4_TinyUSB_CanLinAio/README.md).
+Paths below such as `Libraries/USBClasses/` refer to the CANILFD production
+firmware; in the reference project the same files are in `Core/Inc` and `Core/Src`.
+
 | Interface | Purpose | `bInterfaceProtocol` | Endpoints (IN / OUT) | Host driver (CANgaroo) |
 |-----------|---------|----------------------|----------------------|------------------------|
 | gs_usb  | CAN channels            | `0xFF` | `0x81` / `0x02` | SocketCAN (Linux, kernel `gs_usb`), `CandleApiDriver` (Windows) |
@@ -22,7 +28,10 @@ dongle has the same VID/PID but no LIN or AIO interface.
 **Interface numbers** depend on which drivers are enabled in `usb_app_config.h`
 (`GS_USB_ENABLED`, `LIN_USB_ENABLED`, `AIO_USB_ENABLED`): CAN is 0, LIN follows
 CAN, AIO follows both. With all three enabled: CAN = 0, LIN = 1, AIO = 2.
-Never hard-code them on the host; read the configuration descriptor.
+Never hard-code them on the host; read the configuration descriptor. The Linux
+kernel `gs_usb` driver binds interface 0 of 1d50:606f regardless of its class,
+so firmware built without CAN must use a different VID/PID (the firmware build
+warns).
 
 **Control requests** are vendor requests to the interface:
 
@@ -39,22 +48,29 @@ All firmware handlers share one dispatcher (`tud_vendor_control_xfer_cb` in
 **Errors are STALLs.** An unknown request or an out-of-range channel/line index
 stalls EP0; libusb reports `LIBUSB_ERROR_PIPE`. Checks on `wValue` happen in the
 SETUP stage. lin_usb additionally validates payload fields (table id, slot, DLC)
-in the DATA stage; a request that fails those checks is **silently ignored**, not
-stalled, because the status stage has already been armed.
+in the DATA stage. TinyUSB arms the status stage only after the DATA-stage
+callback returned `true`, so returning `false` there STALLs as well: an invalid
+payload is rejected, never silently dropped. Firmware before this change ACKed
+such requests and ignored them, so hosts should treat a STALL as "rejected" but
+not rely on getting one from older adapters.
 
 **Byte order.** All structures are packed and little-endian. Each interface has a
 `HOST_FORMAT` request (bRequest 0) inherited from gs_usb; the firmware ignores its
 value.
 
-**Timestamps** are `HAL_GetTick()` milliseconds since firmware start, shared by all
-interfaces and channels. Hosts read a `TIMESTAMP` value once when opening and
+**Timestamps.** lin_usb and aio_usb use `HAL_GetTick()` milliseconds since
+firmware start. gs_usb uses a free-running 32-bit **microsecond** counter (wraps
+after ~71 min), both for `TIMESTAMP` and for the per-frame `timestamp_us`, as the
+Linux driver expects. Hosts read a `TIMESTAMP` value once when opening and
 convert frame timestamps relative to it.
 
 **Firmware layering.** Each `*_usb.c` file is only the USB transport. Bus access
 lives behind weak hooks (`gs_engine_*`, `lin_engine_*`, `aio_hw_*`) that the
 application overrides. Device-to-host traffic goes through a small ring queue
-(`*_report_frame()` / `in_queue_push()`) and is pumped from `*_usb_task()` in the
-main loop.
+(`*_report_frame()` / `in_queue_push()`). A frame is sent as soon as the IN
+endpoint is free, otherwise from the transfer-complete callback or
+`*_usb_task()`; nothing is sent before the device is configured, and a frame
+leaves the queue only once its transfer has started.
 
 **Multiplexing.** gs_usb and lin_usb carry several channels over **one** bulk
 endpoint pair; every frame has a `channel` field. A host driver must own a single
@@ -67,9 +83,12 @@ channel does not work: only one handle can claim the interface.
 ## gs_usb (CAN)
 
 Compatible with the Linux kernel `gs_usb` driver (`drivers/net/can/usb/gs_usb.c`) and
-the candleLight Windows API. Firmware: `Libraries/USBClasses/gs_usb.{h,c}`,
-config in `gs_usb_config.h` (`GS_USB_CAN_CHANNEL_COUNT`, currently 2; FDCAN clock
-96 MHz).
+the candleLight Windows API. Firmware: `Libraries/USBClasses/gs_usb.{h,c}`
+(transport) and `gs_usb_engine.c` (the `gs_engine_*` hooks over CanIF/FDCAN),
+config in `gs_usb_config.h` (`GS_USB_CAN_CHANNEL_COUNT` 2; FDCAN clock 160 MHz on
+CANILFD, 96 MHz on the reference board; the host must use `fclk_can` from
+`BT_CONST`, not a constant). Request numbers follow the kernel driver; the
+candle_api source comments disagree on 9–13.
 
 ### Control requests
 
@@ -81,33 +100,53 @@ config in `gs_usb_config.h` (`GS_USB_CAN_CHANNEL_COUNT`, currently 2; FDCAN cloc
 | 3  | `BERR`            | IN  | –       | zeros                      | not implemented |
 | 4  | `BT_CONST`        | IN  | channel | `gs_device_bt_const_t` (40 B) | features, clock, timing limits |
 | 5  | `DEVICE_CONFIG`   | IN  | –       | `gs_device_config_t` (12 B) | `icount` = channels − 1, sw 2, hw 1 |
-| 6  | `TIMESTAMP`       | IN  | –       | `uint32_t`                 | ms tick |
+| 6  | `TIMESTAMP`       | IN  | –       | `uint32_t`                 | µs counter |
 | 7  | `IDENTIFY`        | OUT | channel | up to 64 B                 | flashes LED |
 | 8  | `GET_USER_ID`     | IN  | –       | zeros                      | not implemented |
-| 11 | `SET_USER_ID`     | OUT | –       | discarded                  | not implemented |
-| 12 | `GET_TERMINATION` | IN  | –       | zeros                      | not implemented |
-| 13 | `SET_TERMINATION` | OUT | –       | discarded                  | not implemented |
+| 9  | `SET_USER_ID`     | OUT | –       | discarded                  | not implemented |
+| 10 | `DATA_BITTIMING`  | OUT | channel | `gs_device_bittiming_t` (20 B) | CAN FD data phase, applied on the next `MODE` start with `GS_CAN_FLAG_FD` |
+| 11 | `BT_CONST_EXT`    | IN  | channel | `gs_device_bt_const_ext_t` (72 B) | `BT_CONST` + data-phase limits (dtseg1/2, dsjw, dbrp) |
+| 12 | `SET_TERMINATION` | OUT | –       | discarded                  | not implemented |
+| 13 | `GET_TERMINATION` | IN  | –       | zeros                      | not implemented |
+| 14 | `GET_STATE`       | IN  | channel | `gs_device_state_t` (12 B) | `state` (0 error-active … 3 bus-off, 4 stopped, 5 sleeping), `rxerr`, `txerr` |
 
-Requests 9 (`DATA_BITTIMING`) and 10 (`BT_CONST_EXT`) are not handled (STALL), so
-**CAN FD is not offered**. Advertised features: listen-only, loop-back, one-shot,
-identify (no hardware timestamps, no triple sampling).
+Advertised features (CANILFD; the reference firmware makes the set configurable
+via `GS_USB_FEATURES`): listen-only, HW timestamp, identify, **FD**
+(`0x100`), `BT_CONST_EXT` (`0x400`), `GET_STATE` (`0x2000`) and the private
+`AUTO_RESTART` (bit 31: the channel recovers from bus-off by itself when started
+with mode flag bit 31; Linux masks it out). Loop-back and one-shot are **not**
+offered. Mode flags used: `LISTEN_ONLY 0x1`, `HW_TIMESTAMP 0x10`, `FD 0x100`,
+`AUTO_RESTART 0x80000000`.
 
-### Bulk frame: `gs_host_frame_t` (20 bytes, both directions)
+### Bulk frame: `gs_host_frame_t`
 
 | Offset | Field | Type | Meaning |
 |-------:|-------|------|---------|
 | 0  | `echo_id`  | u32 | host TX: any id ≠ `0xFFFFFFFF`, echoed back; bus RX: `0xFFFFFFFF` |
 | 4  | `can_id`   | u32 | SocketCAN layout: `0x80000000` EFF, `0x40000000` RTR, `0x20000000` ERR |
-| 8  | `can_dlc`  | u8  | 0–8 |
+| 8  | `can_dlc`  | u8  | classic: 0–8 bytes; FD: DLC code 0–15 |
 | 9  | `channel`  | u8  | CAN channel index |
-| 10 | `flags`    | u8  | |
+| 10 | `flags`    | u8  | `0x01` overflow, `0x02` FD, `0x04` BRS, `0x08` ESI |
 | 11 | `reserved` | u8  | |
-| 12 | `data[8]`  | u8×8 | payload |
+| 12 | `data[8]` / `data[64]` | u8 | payload (classic / FD) |
+| 20 / 76 | `timestamp_us` | u32 | IN only, once the channel was started with `HW_TIMESTAMP` |
 
-- **OUT (host → device):** one frame to transmit. Frames with a wrong length or
-  channel are dropped silently.
-- **IN (device → host):** received frames and TX echoes, all channels mixed.
-  A TX is confirmed when its echo comes back.
+Frame sizes on the wire: classic 20 B, classic + timestamp 24 B, FD 76 B,
+FD + timestamp 80 B. An FD frame spans two 64-byte bulk packets; every frame ends
+with a short packet, so a host reading into an 80-byte buffer gets exactly one
+frame per transfer.
+
+- **OUT (host → device):** one frame to transmit, 20 B classic or 76 B FD
+  (trailing padding / timestamp is ignored). A frame shorter than its payload or
+  with a bad channel is dropped. When the device TX queue is full the frame is
+  kept and the OUT endpoint NAKs until it fits, so frames are never lost.
+- **IN (device → host):** received frames, TX echoes and error frames, all
+  channels mixed. A TX is confirmed when its echo comes back, which happens only
+  after the frame was ACKed on the bus. Error frames carry `GS_CAN_ERR_FLAG` and
+  SocketCAN error classes (`linux/can/error.h`) in `can_id`. FD frames are only
+  sent to a channel started with `GS_CAN_FLAG_FD`. When the host falls behind,
+  bus RX frames are dropped first; the last queue slots are reserved for echoes
+  and error frames.
 
 ### Host side
 
@@ -160,10 +199,11 @@ and afterwards only updates publisher payloads and receives results.
 | 8 | `BUS_STATE`     | IN  | channel | `lin_usb_bus_state_t` (4 B) | `state` 0 ok, 1 bus-off, 2 passive (deprecated), 3 error, 4 stopped, 5 sleeping; `dropped` (u16) = frames lost because the device IN queue was full |
 | 9 | `SLEEP_WAKEUP`  | OUT | channel | `lin_usb_sleep_wakeup_t` (4 B) | `command` 0 sleep, 1 wakeup |
 
-`SCHEDULE` and `FRAME_CONFIG` ignore (without stalling) an entry with
+`SCHEDULE` and `FRAME_CONFIG` reject an entry with
 `slot >= LIN_USB_MAX_SCHEDULE_ENTRIES`, `table_id >= LIN_USB_MAX_SCHEDULE_TABLES`
-or a `dlc` outside 1–8; `MODE` start ignores an out-of-range `table_id` the same
-way. Both limits come from `DEVICE_CONFIG` (`schedule_tables`,
+or a `dlc` outside 1–8, and `MODE` start rejects an out-of-range `table_id`,
+all with a STALL (see *Errors are STALLs* above). An out-of-range `SCHEDULE`
+slot is already rejected in the SETUP stage, before any data is sent. Both limits come from `DEVICE_CONFIG` (`schedule_tables`,
 `schedule_entries`); the host constant `LIN_USB_MAX_SCHEDULE_ENTRIES` is only a
 fallback for firmware that reports `schedule_entries = 0`.
 
@@ -182,7 +222,7 @@ publishes, 1 = subscribes), `dlc`, `flags` (`LIN_USB_FRAME_FLAG_*`, e.g. sporadi
 |-------:|-------|------|---------|
 | 0  | `echo_id`      | u32 | `0xFFFFFFFF` = received from bus; `0` = ack of a bulk-OUT set-frame (no bus event); otherwise a published frame |
 | 4  | `timestamp_ms` | u32 | device tick (IN only) |
-| 8  | `lin_id`       | u8  | frame ID (0–63) |
+| 8  | `lin_id`       | u8  | OUT: frame ID (0–63). IN: protected ID as seen on the bus (ID + parity bits 6/7); mask with `0x3F` for the frame ID |
 | 9  | `channel`      | u8  | LIN channel index |
 | 10 | `dlc`          | u8  | 1–8 |
 | 11 | `flags`        | u8  | see below |
@@ -195,10 +235,13 @@ for the same bit), `0x10` sporadic, `0x20` responded, `0x40` valid checksum,
 and a missing `VALID` means a checksum error.
 
 - **OUT (host → device), "set frame":** sets the payload the matching publisher
-  entry sends on its next slot. The device answers every accepted transfer with
-  an IN frame carrying `echo_id = 0` and the unchanged payload — `FLAG_ERROR`
-  set means the LIN ID is not in the running schedule. Frames with `dlc` outside
-  1–8 or a bad channel are dropped without an ack.
+  entry sends on its next slot. The device answers **every** OUT packet with an
+  IN frame carrying `echo_id = 0` and the packet echoed back. If the IN queue is
+  full, the ACK is held and the OUT endpoint NAKs the next packet until it fits,
+  so ACKs are never dropped (bus frames can be; see `dropped` in `BUS_STATE`). `FLAG_ERROR` set
+  means the update was not applied: the LIN ID is not a publisher in the running
+  schedule, or the packet was invalid (`dlc` outside 1–8, bad channel, wrong
+  length; a short packet is acked with an all-zero frame).
 - **IN (device → host):** results of scheduled slots (published echoes and
   subscribed responses), sleep/wakeup events and set-frame acks, all channels
   mixed.
@@ -225,7 +268,9 @@ reference-counts the shared device.
 ## aio_usb (digital I/O + analog)
 
 Firmware: `Libraries/USBClasses/aio_usb.{h,c}`, config in `aio_usb_config.h`
-(32 I/O lines, 16 analog channels, 16-bit resolution). Host mirror:
+(CANILFD: 2 I/O lines, 2 analog channels, 12 bit; reference firmware default:
+32 lines, 16 channels, 16 bit). The host must use the counts from
+`DEVICE_CONFIG`. Host mirror:
 `src/driver/AiodeDriver/aio_usb_protocol.h`. There are no channels; `wValue`
 selects an I/O line where needed.
 
@@ -239,19 +284,20 @@ selects an I/O line where needed.
 | 3 | `IDENTIFY`      | OUT | –    | none (`wLength` 0) | |
 | 4 | `IO_CONFIG`     | OUT | line | `aio_usb_io_config_t` (8 B) | `mode` 0 in / 1 out, `default_state`, `flags` (pull-up `0x01`, pull-down `0x02`, active-low `0x04`), `auto_report_ms` |
 | 5 | `IO_SET`        | OUT | –    | `aio_usb_io_set_t` (8 B) | `mask` of lines to write, `values` |
-| 6 | `READ_STATUS`   | IN  | –    | `aio_usb_report_t` (44 B) | full snapshot |
+| 6 | `READ_STATUS`   | IN  | –    | `aio_usb_report_t` (12 + 2 × analog count B) | full snapshot |
 
-`IO_CONFIG` stalls for `line >= 32`. An unknown `mode` is ignored without a stall.
+`IO_CONFIG` stalls for `line >= io_count` (`DEVICE_CONFIG`; 2 on CANILFD, 32 in
+the reference firmware). An unknown `mode` is ignored without a stall.
 Configuring an output applies `default_state` immediately.
 
-### Report: `aio_usb_report_t` (44 bytes)
+### Report: `aio_usb_report_t` (12 + 2 × analog count bytes)
 
 | Offset | Field | Type | Meaning |
 |-------:|-------|------|---------|
 | 0  | `timestamp_ms` | u32     | device tick at sampling |
 | 4  | `io_states`    | u32     | level of line *i* in bit *i* |
 | 8  | `io_direction` | u32     | bit *i*: 1 output, 0 input |
-| 12 | `analog[16]`   | u16×16  | raw right-aligned ADC values |
+| 12 | `analog[n]`    | u16×n   | raw right-aligned ADC values, `n` = firmware `AIO_USB_ANALOG_COUNT` (44 B total with 16 channels, 16 B on CANILFD) |
 
 ### Bulk endpoints
 
@@ -275,8 +321,9 @@ from CANgaroo, although the protocol addresses 32.
 
 1. Update the firmware header (`Libraries/USBClasses/*_usb.h`) and handler
    (`*_usb.c`): check `wValue` in the SETUP stage and return `false` to STALL on
-   an invalid index; check payload fields in the DATA stage, where an invalid
-   value can only be ignored (the status stage is already armed).
+   an invalid index; check payload fields in the DATA stage and return `false`
+   there too, which STALLs the status stage. Do the same in the reference
+   firmware under `firmware/STM32G4_TinyUSB_CanLinAio/` and its SampleApp.
 2. Mirror the change in the host protocol header (`lin_usb_protocol.h` /
    `aio_usb_protocol.h`); gs_usb must stay compatible with the kernel driver.
 3. Keep structures packed and the sizes identical on both sides. A size mismatch

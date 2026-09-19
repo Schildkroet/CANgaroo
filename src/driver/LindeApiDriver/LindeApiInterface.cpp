@@ -462,7 +462,10 @@ bool LindeApiInterface::readMessage(QList<BusMessage> &msglist, unsigned int tim
     BusMessage msg;
     msg.setInterfaceId(getId());
     msg.setBusType(BusType::LIN);
-    msg.setId(frame.lin_id);
+    // The firmware reports the protected ID as seen on the bus (ID + parity in
+    // bits 6/7); BusMessage carries the plain 6-bit frame ID for LIN, as sent
+    // by sendMessage() and produced by every other LIN source.
+    msg.setId(frame.lin_id & 0x3Fu);
     msg.setLength(frame.dlc);
 
     for (uint8_t i = 0; i < frame.dlc && i < 8u; i++)

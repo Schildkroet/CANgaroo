@@ -158,6 +158,17 @@ windeployqt --release cangaroo.exe
   4. Place the `qtzscanfdbus.dll` from `plugin/canbus`
   5. Place the `zscanfd.dll` from `bin/cangaroo`
 
+## Reference adapter firmware
+
+[`firmware/STM32G4_TinyUSB_CanLinAio/`](firmware/STM32G4_TinyUSB_CanLinAio/README.md)
+is a bare STM32CubeIDE project (STM32G473, TinyUSB) for building your own
+adapter. It implements the device side of all three USB interfaces CANgaroo
+talks to: **gs_usb** (CAN / CAN FD), **lin_usb** (LIN) and **aio_usb** (I/O +
+analog). It contains only the USB transport. Plug your CAN, LIN and GPIO code
+into its weak `gs_engine_*`, `lin_engine_*` and `aio_hw_*` hooks. `SampleApp/`
+inside it is a standalone libusb host program that exercises every request.
+The wire protocol is documented in [`src/docs/usb_interfaces.md`](src/docs/usb_interfaces.md).
+
 ## ARXML to DBC Conversion
 
 Cangaroo natively supports DBC. If you have ARXML files, you can convert them using `canconvert`:

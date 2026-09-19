@@ -1,0 +1,153 @@
+/*
+ * The MIT License (MIT)
+ *
+ * Copyright (c) 2019 Ha Thach (tinyusb.org)
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ *
+ * This file is part of the TinyUSB stack.
+ */
+
+#ifndef TUSB_MIDI_DEVICE_H_
+#define TUSB_MIDI_DEVICE_H_
+
+#include "class/audio/audio.h"
+#include "midi.h"
+
+//--------------------------------------------------------------------+
+// Class Driver Configuration
+//--------------------------------------------------------------------+
+
+#ifndef CFG_TUD_MIDI_RX_EPSIZE
+  #ifdef CFG_TUD_MIDI_EP_BUFSIZE
+    #define CFG_TUD_MIDI_RX_EPSIZE CFG_TUD_MIDI_EP_BUFSIZE
+  #else
+    #define CFG_TUD_MIDI_RX_EPSIZE TUD_EPSIZE_BULK_MAX
+  #endif
+#endif
+
+#ifndef CFG_TUD_MIDI_TX_EPSIZE
+  #ifdef CFG_TUD_MIDI_EP_BUFSIZE
+    #define CFG_TUD_MIDI_TX_EPSIZE CFG_TUD_MIDI_EP_BUFSIZE
+  #else
+    #define CFG_TUD_MIDI_TX_EPSIZE TUD_EPSIZE_BULK_MAX
+  #endif
+#endif
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+//--------------------------------------------------------------------+
+// Application Callback API (optional)
+//--------------------------------------------------------------------+
+void tud_midi_rx_cb(uint8_t itf);
+
+//--------------------------------------------------------------------+
+// Application API (Multiple Interfaces)
+// CFG_TUD_MIDI > 1
+//--------------------------------------------------------------------+
+
+// Check if midi interface is mounted
+bool tud_midi_n_mounted(uint8_t itf);
+
+// Get the number of bytes available for reading
+uint32_t tud_midi_n_available(uint8_t itf, uint8_t cable_num);
+
+// Read byte stream (legacy)
+uint32_t tud_midi_n_stream_read(uint8_t itf, uint8_t cable_num, void *buffer, uint32_t bufsize);
+
+// Read byte stream with cable demultiplexing: returns the cable number of the
+// data that was read.  Reads from a single cable per call; stops when the next
+// packet belongs to a different cable so the caller can dispatch per-cable.
+// Note: shares internal state with tud_midi_n_stream_read(); do not mix both
+// on the same interface.
+uint32_t tud_midi_n_demux_stream_read(uint8_t itf, uint8_t *p_cable_num, void *buffer, uint32_t bufsize);
+
+// Write byte Stream (legacy)
+uint32_t tud_midi_n_stream_write(uint8_t itf, uint8_t cable_num, const uint8_t *buffer, uint32_t bufsize);
+
+// Read an event 4-byte packet
+bool tud_midi_n_packet_read(uint8_t itf, uint8_t packet[4]);
+
+// Read multiple event packets, return number of read packets
+uint32_t tud_midi_n_packet_read_n(uint8_t itf, uint8_t packets[], uint32_t max_packets);
+
+// Write an event 4-byte packet
+bool tud_midi_n_packet_write(uint8_t itf, const uint8_t packet[4]);
+
+// Write multiple event packets, return number of written packets
+uint32_t tud_midi_n_packet_write_n(uint8_t itf, const uint8_t packets[], uint32_t n_packets);
+
+//--------------------------------------------------------------------+
+// Application API (Single Interface)
+//--------------------------------------------------------------------+
+TU_ATTR_ALWAYS_INLINE static inline bool tud_midi_mounted(void) {
+  return tud_midi_n_mounted(0);
+}
+
+TU_ATTR_ALWAYS_INLINE static inline uint32_t tud_midi_available(void) {
+  return tud_midi_n_available(0, 0);
+}
+
+TU_ATTR_ALWAYS_INLINE static inline uint32_t tud_midi_stream_read(void *buffer, uint32_t bufsize) {
+  return tud_midi_n_stream_read(0, 0, buffer, bufsize);
+}
+
+TU_ATTR_ALWAYS_INLINE static inline uint32_t
+tud_midi_demux_stream_read(uint8_t *p_cable_num, void *buffer, uint32_t bufsize) {
+  return tud_midi_n_demux_stream_read(0, p_cable_num, buffer, bufsize);
+}
+
+TU_ATTR_ALWAYS_INLINE static inline uint32_t
+tud_midi_stream_write(uint8_t cable_num, const uint8_t *buffer, uint32_t bufsize) {
+  return tud_midi_n_stream_write(0, cable_num, buffer, bufsize);
+}
+
+TU_ATTR_ALWAYS_INLINE static inline bool tud_midi_packet_read(uint8_t packet[4]) {
+  return tud_midi_n_packet_read(0, packet);
+}
+
+TU_ATTR_ALWAYS_INLINE static inline uint32_t tud_midi_packet_read_n(uint8_t packets[], uint32_t max_packets) {
+  return tud_midi_n_packet_read_n(0, packets, max_packets);
+}
+
+TU_ATTR_ALWAYS_INLINE static inline bool tud_midi_packet_write(const uint8_t packet[4]) {
+  return tud_midi_n_packet_write(0, packet);
+}
+
+TU_ATTR_ALWAYS_INLINE static inline uint32_t tud_midi_packet_write_n(const uint8_t packets[], uint32_t n_packets) {
+  return tud_midi_n_packet_write_n(0, packets, n_packets);
+}
+
+//--------------------------------------------------------------------+
+// Internal Class Driver API
+//--------------------------------------------------------------------+
+void     midid_init(void);
+bool     midid_deinit(void);
+void     midid_reset(uint8_t rhport);
+uint16_t midid_open(uint8_t rhport, const tusb_desc_interface_t *itf_desc, uint16_t max_len);
+bool     midid_control_xfer_cb(uint8_t rhport, uint8_t stage, const tusb_control_request_t *request);
+bool     midid_xfer_cb(uint8_t rhport, uint8_t edpt_addr, xfer_result_t result, uint32_t xferred_bytes);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif
