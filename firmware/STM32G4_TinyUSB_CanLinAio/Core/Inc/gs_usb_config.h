@@ -68,8 +68,8 @@
 /*
  * Feature flags advertised in BREQ_BT_CONST / BREQ_BT_CONST_EXT (GS_CAN_FEATURE_*
  * from gs_usb.h).  Advertise only what the CAN engine really implements.
- * The default below is the set the CANILFD engine supports; the weak stub
- * engine in gs_usb.c implements none of it, so trim it to your engine.
+ * The default below is the full set a complete CAN FD engine supports; the
+ * weak stub engine in gs_usb.c implements none of it, so trim it to your engine.
  *   - HW_TIMESTAMP, BT_CONST_EXT: handled by the transport, always safe.
  *   - FD: needs gs_engine_set_data_bittiming() and FD frame TX/RX.
  *   - GET_STATE: needs gs_engine_get_state().

@@ -17,8 +17,8 @@ enumerates and answers every request, but it does not touch FDCAN, UART or GPIO.
 To build a real adapter, you override those hooks with your own CAN, LIN and I/O
 code (see [Integrating your engine](#integrating-your-engine)).
 
-The same drivers run in production on the CANILFD board (2× CAN FD, 2× LIN),
-where the engines sit on top of an FDCAN BSP and a LIN scheduler.
+The same drivers run unchanged in a production adapter (2× CAN FD, 2× LIN),
+where the hooks are implemented on top of an FDCAN driver and a LIN scheduler.
 
 ## Host compatibility
 
@@ -56,7 +56,7 @@ where the engines sit on top of an FDCAN BSP and a LIN scheduler.
   clocks or enables it, so HSI48 would stay untrimmed and outside USB tolerance.
 - [TinyUSB](https://github.com/hathach/tinyusb) **0.21.0**, vendored in
   `Core/TinyUSB/`: only `src/` (core, device stack, class drivers and the
-  `st/stm32_fsdev` port), the same copy the CANILFD firmware uses. The drivers
+  `st/stm32_fsdev` port). The drivers
   pass `is_isr` to `usbd_edpt_xfer()` (new in 0.21) according to the calling
   context, since frames may be reported from interrupts.
 - STM32CubeG4 HAL/LL.

@@ -4,11 +4,14 @@ The STM32G473 adapter firmware enumerates as **one composite USB device** with u
 vendor-specific interfaces. Each interface has its own bulk endpoint pair and its
 own host driver in CANgaroo.
 
-A bare STM32CubeIDE reference implementation of the device side (USB transport
-only, weak no-op engine hooks) plus a standalone libusb host sample lives in
-[`firmware/STM32G4_TinyUSB_CanLinAio/`](../../firmware/STM32G4_TinyUSB_CanLinAio/README.md).
-Paths below such as `Libraries/USBClasses/` refer to the CANILFD production
-firmware; in the reference project the same files are in `Core/Inc` and `Core/Src`.
+The device side is available as a reference implementation:
+[`firmware/STM32G4_TinyUSB_CanLinAio/`](../../firmware/STM32G4_TinyUSB_CanLinAio/README.md),
+a bare STM32CubeIDE project (STM32G473, TinyUSB 0.21) with all three class
+drivers, weak no-op hooks where the bus code plugs in, and a standalone libusb
+host sample (`SampleApp/`). Firmware paths below are relative to its `Core/`
+directory. Channel counts, clocks and I/O sizes quoted below are that project's
+defaults; a real adapter sizes them for its hardware and reports them in
+`DEVICE_CONFIG` / `BT_CONST`, so hosts must always read them from the device.
 
 | Interface | Purpose | `bInterfaceProtocol` | Endpoints (IN / OUT) | Host driver (CANgaroo) |
 |-----------|---------|----------------------|----------------------|------------------------|
@@ -83,12 +86,13 @@ channel does not work: only one handle can claim the interface.
 ## gs_usb (CAN)
 
 Compatible with the Linux kernel `gs_usb` driver (`drivers/net/can/usb/gs_usb.c`) and
-the candleLight Windows API. Firmware: `Libraries/USBClasses/gs_usb.{h,c}`
-(transport) and `gs_usb_engine.c` (the `gs_engine_*` hooks over CanIF/FDCAN),
-config in `gs_usb_config.h` (`GS_USB_CAN_CHANNEL_COUNT` 2; FDCAN clock 160 MHz on
-CANILFD, 96 MHz on the reference board; the host must use `fclk_can` from
-`BT_CONST`, not a constant). Request numbers follow the kernel driver; the
-candle_api source comments disagree on 9–13.
+the candleLight Windows API. Firmware: [`Src/gs_usb.c`](../../firmware/STM32G4_TinyUSB_CanLinAio/Core/Src/gs_usb.c) /
+[`Inc/gs_usb.h`](../../firmware/STM32G4_TinyUSB_CanLinAio/Core/Inc/gs_usb.h) (transport, weak `gs_engine_*` hooks for the
+FDCAN code), config in [`Inc/gs_usb_config.h`](../../firmware/STM32G4_TinyUSB_CanLinAio/Core/Inc/gs_usb_config.h)
+(`GS_USB_CAN_CHANNEL_COUNT` 2, FDCAN clock 96 MHz). The clock differs between
+boards, so the host must use `fclk_can` from `BT_CONST`, not a constant.
+Request numbers follow the kernel driver; the candle_api source comments
+disagree on 9–13.
 
 ### Control requests
 
@@ -110,12 +114,13 @@ candle_api source comments disagree on 9–13.
 | 13 | `GET_TERMINATION` | IN  | –       | zeros                      | not implemented |
 | 14 | `GET_STATE`       | IN  | channel | `gs_device_state_t` (12 B) | `state` (0 error-active … 3 bus-off, 4 stopped, 5 sleeping), `rxerr`, `txerr` |
 
-Advertised features (CANILFD; the reference firmware makes the set configurable
-via `GS_USB_FEATURES`): listen-only, HW timestamp, identify, **FD**
+Advertised features come from `GS_USB_FEATURES` in `gs_usb_config.h`, so each
+adapter lists only what its CAN code implements. The default set: listen-only,
+HW timestamp, identify, **FD**
 (`0x100`), `BT_CONST_EXT` (`0x400`), `GET_STATE` (`0x2000`) and the private
 `AUTO_RESTART` (bit 31: the channel recovers from bus-off by itself when started
-with mode flag bit 31; Linux masks it out). Loop-back and one-shot are **not**
-offered. Mode flags used: `LISTEN_ONLY 0x1`, `HW_TIMESTAMP 0x10`, `FD 0x100`,
+with mode flag bit 31; Linux masks it out). Loop-back and one-shot are not in
+the default set. Mode flags used: `LISTEN_ONLY 0x1`, `HW_TIMESTAMP 0x10`, `FD 0x100`,
 `AUTO_RESTART 0x80000000`.
 
 ### Bulk frame: `gs_host_frame_t`
@@ -174,10 +179,10 @@ frame per transfer.
 
 ## lin_usb (LIN)
 
-Firmware: `Libraries/USBClasses/lin_usb.{h,c}` (USB transport) and
-`lin_usb_engine.c` (the `lin_engine_*` hooks over `LinIF`), config in
-`lin_usb_config.h`, which derives its limits from `Src/Config.h`
-(`LIN_USB_CHANNEL_COUNT` 2, `LIN_USB_MAX_SCHEDULE_TABLES` 6,
+Firmware: [`Src/lin_usb.c`](../../firmware/STM32G4_TinyUSB_CanLinAio/Core/Src/lin_usb.c) /
+[`Inc/lin_usb.h`](../../firmware/STM32G4_TinyUSB_CanLinAio/Core/Inc/lin_usb.h) (USB transport, weak `lin_engine_*` hooks
+for the LIN scheduler), config in [`Inc/lin_usb_config.h`](../../firmware/STM32G4_TinyUSB_CanLinAio/Core/Inc/lin_usb_config.h)
+(`LIN_USB_CHANNEL_COUNT` 2, `LIN_USB_MAX_SCHEDULE_TABLES` 4,
 `LIN_USB_MAX_SCHEDULE_ENTRIES` 16). Host mirror:
 `src/driver/LindeApiDriver/lin_usb_protocol.h` (keep in sync by hand).
 
@@ -267,10 +272,11 @@ reference-counts the shared device.
 
 ## aio_usb (digital I/O + analog)
 
-Firmware: `Libraries/USBClasses/aio_usb.{h,c}`, config in `aio_usb_config.h`
-(CANILFD: 2 I/O lines, 2 analog channels, 12 bit; reference firmware default:
-32 lines, 16 channels, 16 bit). The host must use the counts from
-`DEVICE_CONFIG`. Host mirror:
+Firmware: [`Src/aio_usb.c`](../../firmware/STM32G4_TinyUSB_CanLinAio/Core/Src/aio_usb.c) /
+[`Inc/aio_usb.h`](../../firmware/STM32G4_TinyUSB_CanLinAio/Core/Inc/aio_usb.h), config in
+[`Inc/aio_usb_config.h`](../../firmware/STM32G4_TinyUSB_CanLinAio/Core/Inc/aio_usb_config.h) (32 I/O lines, 16 analog
+channels, 16 bit; a board with two lines and a 12-bit ADC sets 2 / 2 / 12). The
+host must use the counts from `DEVICE_CONFIG`. Host mirror:
 `src/driver/AiodeDriver/aio_usb_protocol.h`. There are no channels; `wValue`
 selects an I/O line where needed.
 
@@ -286,8 +292,7 @@ selects an I/O line where needed.
 | 5 | `IO_SET`        | OUT | –    | `aio_usb_io_set_t` (8 B) | `mask` of lines to write, `values` |
 | 6 | `READ_STATUS`   | IN  | –    | `aio_usb_report_t` (12 + 2 × analog count B) | full snapshot |
 
-`IO_CONFIG` stalls for `line >= io_count` (`DEVICE_CONFIG`; 2 on CANILFD, 32 in
-the reference firmware). An unknown `mode` is ignored without a stall.
+`IO_CONFIG` stalls for `line >= io_count` (from `DEVICE_CONFIG`; 32 by default). An unknown `mode` is ignored without a stall.
 Configuring an output applies `default_state` immediately.
 
 ### Report: `aio_usb_report_t` (12 + 2 × analog count bytes)
@@ -297,7 +302,7 @@ Configuring an output applies `default_state` immediately.
 | 0  | `timestamp_ms` | u32     | device tick at sampling |
 | 4  | `io_states`    | u32     | level of line *i* in bit *i* |
 | 8  | `io_direction` | u32     | bit *i*: 1 output, 0 input |
-| 12 | `analog[n]`    | u16×n   | raw right-aligned ADC values, `n` = firmware `AIO_USB_ANALOG_COUNT` (44 B total with 16 channels, 16 B on CANILFD) |
+| 12 | `analog[n]`    | u16×n   | raw right-aligned ADC values, `n` = firmware `AIO_USB_ANALOG_COUNT` (44 B total with the default 16 channels, 16 B with 2) |
 
 ### Bulk endpoints
 
@@ -319,11 +324,11 @@ from CANgaroo, although the protocol addresses 32.
 
 ## Adding or changing a request
 
-1. Update the firmware header (`Libraries/USBClasses/*_usb.h`) and handler
-   (`*_usb.c`): check `wValue` in the SETUP stage and return `false` to STALL on
-   an invalid index; check payload fields in the DATA stage and return `false`
-   there too, which STALLs the status stage. Do the same in the reference
-   firmware under `firmware/STM32G4_TinyUSB_CanLinAio/` and its SampleApp.
+1. Update the firmware header (`Core/Inc/*_usb.h`) and handler
+   (`Core/Src/*_usb.c`) of the reference firmware: check `wValue` in the SETUP
+   stage and return `false` to STALL on an invalid index; check payload fields
+   in the DATA stage and return `false` there too, which STALLs the status
+   stage. Update its SampleApp as well.
 2. Mirror the change in the host protocol header (`lin_usb_protocol.h` /
    `aio_usb_protocol.h`); gs_usb must stay compatible with the kernel driver.
 3. Keep structures packed and the sizes identical on both sides. A size mismatch
