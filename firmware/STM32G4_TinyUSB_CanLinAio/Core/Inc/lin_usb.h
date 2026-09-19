@@ -212,6 +212,11 @@ void lin_usb_task(void);
 bool linusb_control_xfer_cb(uint8_t rhport, uint8_t stage,
                              tusb_control_request_t const *req);
 
+/* USB bus suspend / resume, called by the tud_suspend_cb() / tud_resume_cb()
+ * dispatcher in usb_app_drivers.c. */
+void lin_usb_suspend(void);
+void lin_usb_resume(void);
+
 /*
  * Engine -> host: queue a processed LIN frame (a transmitted publish or a
  * received frame) to be streamed to the host over the bulk IN endpoint.
@@ -261,3 +266,9 @@ void lin_engine_task(void);
 
 /* USB bus reset: stop every channel (called from tud_task(), main-loop context). */
 void lin_engine_reset(void);
+
+/* USB suspend: the host is asleep or gone, so stop every running channel (a
+ * master would keep driving its schedule).  Resume: restart exactly those
+ * channels with their configuration and schedule. */
+void lin_engine_suspend(void);
+void lin_engine_resume(void);

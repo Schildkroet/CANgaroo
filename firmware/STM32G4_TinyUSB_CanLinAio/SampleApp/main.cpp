@@ -251,6 +251,9 @@ static void printCanDeviceConfig(const gs_device_config_t &cfg,
     if (bt.feature & GS_CAN_FEATURE_FD)            std::cout << " FD";
     if (bt.feature & GS_CAN_FEATURE_BT_CONST_EXT)  std::cout << " BT_CONST_EXT";
     if (bt.feature & GS_CAN_FEATURE_GET_STATE)     std::cout << " GET_STATE";
+    if (bt.feature & GS_CAN_FEATURE_TERMINATION)   std::cout << " TERMINATION";
+    if (bt.feature & GS_CAN_FEATURE_BERR_REPORTING) std::cout << " BERR_REPORTING";
+    if (bt.feature & GS_CAN_FEATURE_BUS_OFF_RECOVERY) std::cout << " BUS_OFF_RECOVERY";
     if (bt.feature & GS_CAN_FEATURE_AUTO_RESTART)  std::cout << " AUTO_RESTART";
     std::cout << "\n";
 
@@ -498,6 +501,27 @@ static void sampleCanLoopback(CandeApi &can, uint32_t base_flags)
 
     /* Restore normal mode */
     can.setMode(0, GS_CAN_MODE_START, base_flags);
+}
+
+static void sampleCanTermination(CandeApi &can)
+{
+    std::cout << "\n--- CAN termination test ---\n";
+
+    bool orig = false;
+    if (!check(can.getTermination(0, orig), can.lastError(), "getTermination"))
+    {
+        return;
+    }
+    std::cout << "[CAN termination] ch=0 " << (orig ? "ON" : "OFF") << "\n";
+
+    /* Toggle, read back, then restore the original state. */
+    bool now = orig;
+    if (check(can.setTermination(0, !orig), can.lastError(), "setTermination toggle") &&
+        check(can.getTermination(0, now), can.lastError(), "getTermination readback"))
+    {
+        check(now == !orig, "read-back state does not match", "termination toggled");
+    }
+    check(can.setTermination(0, orig), can.lastError(), "setTermination restore");
 }
 
 /* =========================================================================
@@ -780,9 +804,11 @@ int main()
             std::cout << "[CAN timestamp] " << ts << " us\n";
         }
 
-        /* Ask for per-frame timestamps when the device offers them. */
-        const uint32_t base_flags = (bt.feature & GS_CAN_FEATURE_HW_TIMESTAMP)
-                                  ? GS_CAN_FLAG_HW_TIMESTAMP : 0u;
+        /* Ask for per-frame timestamps and bus-error frames when the device
+         * offers them. */
+        const uint32_t base_flags =
+            ((bt.feature & GS_CAN_FEATURE_HW_TIMESTAMP)   ? GS_CAN_FLAG_HW_TIMESTAMP   : 0u) |
+            ((bt.feature & GS_CAN_FEATURE_BERR_REPORTING) ? GS_CAN_FLAG_BERR_REPORTING : 0u);
 
         /* 500 kbit/s, computed from the clock the device reports. */
         gs_device_bittiming_t timing{};
@@ -834,6 +860,15 @@ int main()
         else
         {
             std::cout << "[CAN] LOOP_BACK not advertised -- skipping loopback test.\n";
+        }
+
+        if (bt.feature & GS_CAN_FEATURE_TERMINATION)
+        {
+            sampleCanTermination(can);
+        }
+        else
+        {
+            std::cout << "[CAN] TERMINATION not advertised -- skipping termination test.\n";
         }
 
         if (bt.feature & GS_CAN_FEATURE_GET_STATE)

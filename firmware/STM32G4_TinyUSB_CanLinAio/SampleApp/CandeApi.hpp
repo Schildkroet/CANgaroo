@@ -66,6 +66,10 @@ public:
      * GS_CAN_FEATURE_GET_STATE is advertised. */
     bool getState(uint8_t ch, gs_device_state_t &state);
 
+    /* Bus termination state of channel ch.  Only valid when
+     * GS_CAN_FEATURE_TERMINATION is advertised; the device stalls otherwise. */
+    bool getTermination(uint8_t ch, bool &on);
+
     /* Send byte-order handshake (call once after open, before any config). */
     bool setHostFormat();
 
@@ -86,6 +90,15 @@ public:
 
     /* Flash the LED to confirm which device is connected. */
     bool identify(uint8_t ch);
+
+    /* Switch the bus termination of channel ch on or off.  Only valid when
+     * GS_CAN_FEATURE_TERMINATION is advertised; the device stalls otherwise. */
+    bool setTermination(uint8_t ch, bool on);
+
+    /* Restart channel ch after bus-off.  Only valid when the channel was
+     * started with GS_CAN_FLAG_BUS_OFF_RECOVERY and is bus-off; the device
+     * stalls otherwise. */
+    bool busOffRecovery(uint8_t ch);
 
     /* ---- Bulk frame I/O ---- */
 

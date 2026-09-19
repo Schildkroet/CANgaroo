@@ -36,7 +36,8 @@ CandleApiInterface::CandleApiInterface(CandleApiDriver *driver,
     _backend(driver->backend()),
     _numRx(0),
     _numTx(0),
-    _numTxErr(0)
+    _numTxErr(0),
+    _numRxOverruns(0)
 {
     _settings.setBitrate(500000);
     _settings.setSamplePoint(875);
@@ -284,7 +285,7 @@ uint32_t CandleApiInterface::getCapabilities()
             retval |= BusInterface::capability_canfd;
         }
 
-        if (caps.feature & CANDLE_FEATURE_AUTO_RESTART) {
+        if (caps.feature & (CANDLE_FEATURE_AUTO_RESTART | CANDLE_FEATURE_BUS_OFF_RECOVERY)) {
             retval |= BusInterface::capability_auto_restart;
         }
 
@@ -423,13 +424,24 @@ void CandleApiInterface::open()
     if (_settings.isTripleSampling()) {
         flags |= CANDLE_MODE_TRIPLE_SAMPLE;
     }
-    if (_settings.doAutoRestart()) {
-        // Vendor flag: only send it to firmware that advertises the feature,
-        // other gs_usb devices may treat unknown mode bits as an error.
+    {
+        // Only send mode bits the firmware advertises: other gs_usb devices
+        // may treat unknown mode bits as an error.
         candle_capability_t caps;
-        if (candle_channel_get_capabilities(_sharedDev->handle, _channel, &caps)
-            && (caps.feature & CANDLE_FEATURE_AUTO_RESTART)) {
-            flags |= CANDLE_MODE_AUTO_RESTART;
+        const bool haveCaps = candle_channel_get_capabilities(_sharedDev->handle, _channel, &caps);
+        if (_settings.doAutoRestart()) {
+            if (haveCaps && (caps.feature & CANDLE_FEATURE_AUTO_RESTART)) {
+                flags |= CANDLE_MODE_AUTO_RESTART;
+            }
+        } else if (haveCaps && (caps.feature & CANDLE_FEATURE_BUS_OFF_RECOVERY)) {
+            // This firmware restarts after bus-off on its own by default;
+            // taking over recovery keeps the channel off, as configured.
+            flags |= CANDLE_MODE_BUS_OFF_RECOVERY;
+        }
+        // Bus errors are shown as error frames; firmware that advertises
+        // BERR_REPORTING only sends them on request.
+        if (haveCaps && (caps.feature & CANDLE_FEATURE_BERR_REPORTING)) {
+            flags |= CANDLE_MODE_BERR_REPORTING;
         }
     }
 
@@ -487,6 +499,7 @@ void CandleApiInterface::open()
     _numRx = 0;
     _numTx = 0;
     _numTxErr = 0;
+    _numRxOverruns = 0;
     {
         // Starting the channel discards anything still queued on the device
         QMutexLocker lock(&_txMutex);
@@ -678,12 +691,25 @@ bool CandleApiInterface::readMessage(QList<BusMessage> &msglist, unsigned int ti
             ? static_cast<int64_t>(queuedFrame.timestampUs)
             : static_cast<int64_t>(QDateTime::currentMSecsSinceEpoch()) * 1000LL;
 
+    // The device lost received frames before this one. The flag can ride on
+    // any frame, echoes included; like the Linux gs_usb driver, count it and
+    // report it as an RX overflow error.
+    const bool overflow = (frame.flags & CANDLE_FRAME_FLAG_OVERFLOW) != 0;
+    if (overflow) {
+        _numRxOverruns++;
+        BusMessage err;
+        err.setInterfaceId(getId());
+        err.setErrorFlag(BusError::Overrun);
+        err.setTimestamp_us(frameTs_us);
+        msglist.append(err);
+    }
+
     if (frameType == CANDLE_FRAMETYPE_ECHO) {
         // TX confirmation: the device transmitted one of our frames. Show it
         // now, stamped with the device's transmit time.
         BusMessage txMsg;
         if (!takeConfirmedTx(frame, txMsg)) {
-            return false;
+            return overflow;
         }
         _numTx++;
         txMsg.setInterfaceId(getId());
@@ -798,7 +824,7 @@ int CandleApiInterface::getNumTxErrors()
 
 int CandleApiInterface::getNumRxOverruns()
 {
-    return 0;
+    return static_cast<int>(_numRxOverruns);
 }
 
 int CandleApiInterface::getNumTxDropped()

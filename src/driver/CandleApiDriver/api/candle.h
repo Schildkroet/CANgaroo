@@ -76,10 +76,15 @@ enum {
     CANDLE_FEATURE_BT_CONST_EXT             = 0x0400,
     /** CAN channel supports configurable bus termination. */
     CANDLE_FEATURE_TERMINATION              = 0x0800,
-    /** CAN channel supports bus error reporting (Unsupported, always enabled) */
+    /** CAN channel sends bus-error frames only when started with
+     *  CANDLE_MODE_BERR_REPORTING. */
     CANDLE_FEATURE_BERR_REPORTING           = 0x1000,
     /** CAN channel supports reporting of bus state. */
     CANDLE_FEATURE_GET_STATE                = 0x2000,
+    /** candleLight_fw extension: the channel restarts after bus-off by itself
+     *  unless started with CANDLE_MODE_BUS_OFF_RECOVERY, which leaves recovery
+     *  to the host. */
+    CANDLE_FEATURE_BUS_OFF_RECOVERY         = 0x40000,
 };
 
 /** Vendor extension (CANILFD firmware, not upstream gs_usb): the channel
@@ -113,6 +118,8 @@ typedef enum {
     CANDLE_MODE_HW_TIMESTAMP     = 0x0010,
     CANDLE_MODE_PAD_PKTS_TO_MAX  = 0x0080,
     CANDLE_MODE_FD               = 0x0100,
+    CANDLE_MODE_BERR_REPORTING   = 0x1000,
+    CANDLE_MODE_BUS_OFF_RECOVERY = 0x40000,
 } candle_mode_t;
 
 /** Vendor extension, see CANDLE_FEATURE_AUTO_RESTART. Only set it on devices

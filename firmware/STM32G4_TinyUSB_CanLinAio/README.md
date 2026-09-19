@@ -139,6 +139,10 @@ aio_usb needs no report call: it polls its `aio_hw_*` hooks from
 | `bool gs_engine_send(ch, frame)` | Bulk OUT frame to transmit. Return `false` if the TX queue is full: the transport keeps the frame, NAKs the host and retries from `gs_usb_task()` |
 | `gs_engine_get_state(ch, state)` | `BREQ_GET_STATE`: `GS_CAN_STATE_*` and the TX/RX error counters |
 | `gs_engine_identify(ch)` | `BREQ_IDENTIFY`: blink an LED |
+| `bool gs_engine_set_termination(ch, on)` | `BREQ_SET_TERMINATION`: switch the 120 Ω bus termination. Default returns `false` (request stalled) |
+| `bool gs_engine_bus_off_recovery(ch)` | `BREQ_BUS_OFF_RECOVERY`: restart a bus-off channel the host started with `GS_CAN_FLAG_BUS_OFF_RECOVERY`. Default returns `false` (request stalled) |
+| `gs_engine_suspend()` / `gs_engine_resume()` | USB suspend / resume (from `tud_suspend_cb()` / `tud_resume_cb()` in `usb_app_drivers.c`): take started channels off the bus, restore them. Default: no-op |
+| `bool gs_engine_get_termination(ch, &on)` | `BREQ_GET_TERMINATION`. Default returns `false`. `GS_CAN_FEATURE_TERMINATION` is advertised for a channel only while this returns `true` |
 | `gs_engine_can_clock_hz()` | FDCAN kernel clock reported in `BREQ_BT_CONST`. Default: `GS_USB_FDCAN_CLK_HZ` |
 | `gs_engine_timestamp_us()` | 32-bit µs time base for `BREQ_TIMESTAMP` and frame timestamps. Default: `HAL_GetTick()` + SysTick |
 | `gs_engine_task()` | Called from `gs_usb_task()`. Poll the controller here if you do not use RX interrupts |
@@ -157,14 +161,34 @@ Report every received frame, TX echo and error frame with
   *code* 0–15 in `can_dlc`. Do this only while the host has started the channel
   with `GS_CAN_FLAG_FD`.
 
-The transport stamps `timestamp_us` itself. When the host falls behind, bus RX
+`gs_usb_report_frame()` stamps `timestamp_us` with the current time.
+For bus frames and TX echoes, use `gs_usb_report_frame_at(frame, timestamp_us)`
+instead, with the time taken in the controller interrupt (end of frame), so
+main-loop latency does not end up in the timestamps. Use the same clock as
+`gs_engine_timestamp_us()`. When the host falls behind, bus RX
 frames are dropped first. The last `IN_QUEUE_RESERVED` queue slots are kept for
-TX echoes and error frames.
+TX echoes and error frames. A frame that does not fit marks its channel as
+overflowed. The channel's next frame then carries `GS_FRAME_FLAG_OVERFLOW`,
+which Linux counts as an RX overrun. Call `gs_usb_report_overflow(ch)` when
+frames are lost before they reach the transport (controller FIFO, engine
+queue).
 
 The feature bits advertised to the host come from `GS_USB_FEATURES` in
-`gs_usb_config.h`. List only what your engine implements.
-`GS_CAN_FEATURE_AUTO_RESTART` (bit 31) is a private extension: the engine
-recovers from bus-off by itself. Linux masks it out.
+`gs_usb_config.h`. List only what your engine implements. Engine rules for the
+error-handling features:
+
+- **`BERR_REPORTING`:** send bus-error frames (`CAN_ERR_PROT`/`CAN_ERR_BUSERROR`)
+  only while the host set `GS_CAN_FLAG_BERR_REPORTING`. Always report state
+  changes and bus-off.
+- **Bus-off:** by default, restart the channel yourself and report
+  `CAN_ERR_RESTARTED`. Mainline Linux cannot restart a gs_usb channel, so this
+  is what makes it usable. With `GS_CAN_FEATURE_BUS_OFF_RECOVERY` (bit 18,
+  candleLight_fw extension), a host that starts the channel with
+  `GS_CAN_FLAG_BUS_OFF_RECOVERY` takes over and triggers recovery with
+  `BREQ_BUS_OFF_RECOVERY`.
+- **`AUTO_RESTART` (bit 31):** the older private flag. It explicitly asks for
+  automatic restart and overrides `GS_CAN_FLAG_BUS_OFF_RECOVERY`. Linux masks
+  out bits 18 and 31.
 
 Wire-format notes: request numbers and the frame layout follow the Linux kernel
 driver. The `candle_api` comments disagree on some request numbers. A frame
@@ -191,6 +215,7 @@ device runs the bus timing itself.
 | `lin_engine_identify(ch)` | `BREQ_IDENTIFY` |
 | `lin_engine_task()` | Called from `lin_usb_task()` |
 | `lin_engine_reset()` | USB bus reset or unplug: stop every channel |
+| `lin_engine_suspend()` / `lin_engine_resume()` | USB suspend / resume: stop the channels that are running (a master would keep driving its schedule), then restart exactly those with their configuration and schedule. Leave channels the host put to sleep alone. Default: no-op |
 
 Protocol behaviour handled by the transport:
 
@@ -225,6 +250,13 @@ Size the interface to your board in `aio_usb_config.h`. The line count, the
 analog count and resolution, and the per-line input/output capability masks are
 all reported to the host.
 
+On USB suspend the transport pauses auto-reports and restarts their timers on
+resume. Output levels are left as they are: they generate no traffic, and
+changing them because the host went to sleep would be surprising.
+
+All three drivers get suspend/resume from the single `tud_suspend_cb()` /
+`tud_resume_cb()` pair in `usb_app_drivers.c`.
+
 ## Linux quick test
 
 ```bash
@@ -246,7 +278,7 @@ opens all three interfaces at the same time and exercises every request:
 | File | Content |
 | --- | --- |
 | `gs_usb_protocol.h`, `lin_usb_protocol.h`, `aio_usb_protocol.h` | Host-side copies of the wire protocol. Keep them in sync with `Core/Inc/*_usb.h` |
-| `CandeApi` | CAN: bit timing (nominal + FD data phase), mode, `BT_CONST_EXT`, `GET_STATE`, classic and FD frame I/O |
+| `CandeApi` | CAN: bit timing (nominal + FD data phase), mode, `BT_CONST_EXT`, `GET_STATE`, termination, bus-off recovery, classic and FD frame I/O |
 | `LindeApi` | LIN: bus config, schedule upload/start, sleep/wakeup, bus state. `setFrame()` waits for the device's set-data ACK and keeps bus frames that arrive meanwhile for `getFrame()` |
 | `AiodeApi` | AIO: I/O config, outputs, status, auto-report |
 | `main.cpp` | Test run with a PASSED/FAILED summary per interface |

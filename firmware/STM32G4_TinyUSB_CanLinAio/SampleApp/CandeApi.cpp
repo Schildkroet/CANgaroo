@@ -302,6 +302,21 @@ bool CandeApi::getState(uint8_t ch, gs_device_state_t &state)
     return controlIn(GS_USB_BREQ_GET_STATE, static_cast<uint16_t>(ch), &state, sizeof(state));
 }
 
+bool CandeApi::getTermination(uint8_t ch, bool &on)
+{
+    if (!checkChannel(ch))
+    {
+        return false;
+    }
+    gs_device_termination_state_t term{};
+    if (!controlIn(GS_USB_BREQ_GET_TERMINATION, static_cast<uint16_t>(ch), &term, sizeof(term)))
+    {
+        return false;
+    }
+    on = (term.state == GS_CAN_TERMINATION_STATE_ON);
+    return true;
+}
+
 bool CandeApi::setHostFormat()
 {
     gs_host_config_t cfg;
@@ -357,6 +372,27 @@ bool CandeApi::identify(uint8_t ch)
     uint8_t dummy = 0;
     return controlOut(GS_USB_BREQ_IDENTIFY, static_cast<uint16_t>(ch),
                       &dummy, 1u);
+}
+
+bool CandeApi::setTermination(uint8_t ch, bool on)
+{
+    if (!checkChannel(ch))
+    {
+        return false;
+    }
+    gs_device_termination_state_t term{};
+    term.state = on ? GS_CAN_TERMINATION_STATE_ON : GS_CAN_TERMINATION_STATE_OFF;
+    return controlOut(GS_USB_BREQ_SET_TERMINATION, static_cast<uint16_t>(ch), &term, sizeof(term));
+}
+
+bool CandeApi::busOffRecovery(uint8_t ch)
+{
+    if (!checkChannel(ch))
+    {
+        return false;
+    }
+    uint32_t unused = 0;
+    return controlOut(GS_USB_BREQ_BUS_OFF_RECOVERY, static_cast<uint16_t>(ch), &unused, sizeof(unused));
 }
 
 /* -------------------------------------------------------------------------

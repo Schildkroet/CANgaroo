@@ -526,6 +526,16 @@ void lin_usb_init(void)
     _in_busy = false;
 }
 
+void lin_usb_suspend(void)
+{
+    lin_engine_suspend();
+}
+
+void lin_usb_resume(void)
+{
+    lin_engine_resume();
+}
+
 void lin_usb_task(void)
 {
     /* Service the LIN engine (no-op until the real scheduler is integrated). */
@@ -728,5 +738,21 @@ __attribute__((weak)) void lin_engine_task(void)
  * USB bus reset: stop every channel the host had started.
  */
 __attribute__((weak)) void lin_engine_reset(void)
+{
+}
+
+/*
+ * USB suspend: stop every running channel, so a master does not keep driving
+ * its schedule while the host sleeps or is gone.
+ */
+__attribute__((weak)) void lin_engine_suspend(void)
+{
+}
+
+/*
+ * USB resume: restart the channels lin_engine_suspend() stopped, with their
+ * bus configuration and active schedule table.
+ */
+__attribute__((weak)) void lin_engine_resume(void)
 {
 }

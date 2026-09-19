@@ -43,6 +43,9 @@ typedef struct
     volatile uint32_t next_report_ms; /* HAL_GetTick() of next due report */
 } aio_usb_io_t;
 
+/* true between USB suspend and resume: no auto-reports are generated */
+static bool _suspended;
+
 /* -------------------------------------------------------------------------
  * Module-level state
  * ------------------------------------------------------------------------- */
@@ -176,6 +179,7 @@ static void reset_usb_state(void)
     _in_tail    = 0;
     _usb.ep_in  = 0;
     _usb.ep_out = 0;
+    _suspended  = false;
 }
 
 /* -------------------------------------------------------------------------
@@ -444,11 +448,31 @@ void aio_usb_init(void)
     _in_busy = false;
 }
 
+void aio_usb_suspend(void)
+{
+    _suspended = true;
+}
+
+void aio_usb_resume(void)
+{
+    /* Restart every report timer from now: reports that fell due while
+     * suspended would otherwise all fire at once. */
+    uint32_t now = HAL_GetTick();
+    for (uint8_t i = 0; i < AIO_USB_IO_COUNT; i++)
+    {
+        if (_io[i].auto_report_ms != 0u)
+        {
+            _io[i].next_report_ms = now + _io[i].auto_report_ms;
+        }
+    }
+    _suspended = false;
+}
+
 void aio_usb_task(void)
 {
     /* Only touch endpoints once configured (tud_mounted): before
      * SET_CONFIGURATION the endpoint addresses are still 0 (EP0). */
-    if (!tud_mounted())
+    if (!tud_mounted() || _suspended)
     {
         return;
     }

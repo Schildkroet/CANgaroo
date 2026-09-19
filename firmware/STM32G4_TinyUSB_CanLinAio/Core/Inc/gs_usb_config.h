@@ -73,9 +73,17 @@
  *   - HW_TIMESTAMP, BT_CONST_EXT: handled by the transport, always safe.
  *   - FD: needs gs_engine_set_data_bittiming() and FD frame TX/RX.
  *   - GET_STATE: needs gs_engine_get_state().
- *   - AUTO_RESTART: private extension (bit 31), engine recovers from bus-off.
+ *   - BERR_REPORTING: the engine sends bus-error frames (CAN_ERR_PROT /
+ *     CAN_ERR_BUSERROR) only while the host set GS_CAN_FLAG_BERR_REPORTING.
+ *   - BUS_OFF_RECOVERY: the engine restarts after bus-off by itself unless the
+ *     host set GS_CAN_FLAG_BUS_OFF_RECOVERY, then on
+ *     gs_engine_bus_off_recovery().
+ *   - AUTO_RESTART: private extension (bit 31), engine recovers from bus-off
+ *     (already the default; kept for hosts that set it).
  *   - LOOP_BACK / ONE_SHOT / TRIPLE_SAMPLE: add if the engine honours the
  *     matching GS_CAN_FLAG_* in gs_engine_set_mode().
+ *   - TERMINATION: do not list it here; gs_usb.c adds it per channel whenever
+ *     gs_engine_get_termination() succeeds for that channel.
  */
 #define GS_USB_FEATURES         (GS_CAN_FEATURE_LISTEN_ONLY  | \
                                  GS_CAN_FEATURE_HW_TIMESTAMP | \
@@ -83,6 +91,8 @@
                                  GS_CAN_FEATURE_FD           | \
                                  GS_CAN_FEATURE_BT_CONST_EXT | \
                                  GS_CAN_FEATURE_GET_STATE    | \
+                                 GS_CAN_FEATURE_BERR_REPORTING | \
+                                 GS_CAN_FEATURE_BUS_OFF_RECOVERY | \
                                  GS_CAN_FEATURE_AUTO_RESTART)
 
 #endif /* GS_USB_CONFIG_H_ */

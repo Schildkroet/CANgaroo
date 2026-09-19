@@ -135,3 +135,12 @@ void aio_usb_task(void);
 /* Internal: vendor control handler called by the dispatcher in usb_app_drivers.c. */
 bool aiousb_control_xfer_cb(uint8_t rhport, uint8_t stage,
                             tusb_control_request_t const *req);
+
+/*
+ * USB bus suspend / resume, called by the tud_suspend_cb() / tud_resume_cb()
+ * dispatcher in usb_app_drivers.c.  Auto-reports pause while suspended and
+ * restart one period after resume.  Output levels are left as they are: they
+ * are static and generate no traffic.
+ */
+void aio_usb_suspend(void);
+void aio_usb_resume(void);

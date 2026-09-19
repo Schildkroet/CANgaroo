@@ -35,9 +35,10 @@ typedef enum
     GS_USB_BREQ_SET_USER_ID   = 9,  /* not implemented                               */
     GS_USB_BREQ_DATA_BITTIMING = 10, /* OUT: CAN FD data-phase bit timing            */
     GS_USB_BREQ_BT_CONST_EXT  = 11, /* IN:  BT_CONST + CAN FD data-phase limits      */
-    GS_USB_BREQ_SET_TERMINATION = 12, /* not implemented                             */
-    GS_USB_BREQ_GET_TERMINATION = 13, /* not implemented                             */
+    GS_USB_BREQ_SET_TERMINATION = 12, /* OUT: bus termination on/off (uint32)        */
+    GS_USB_BREQ_GET_TERMINATION = 13, /* IN:  bus termination state (uint32)         */
     GS_USB_BREQ_GET_STATE     = 14, /* IN:  channel state + error counters           */
+    GS_USB_BREQ_BUS_OFF_RECOVERY = 32, /* OUT: recover from bus-off (candleLight_fw ext.) */
 } gs_usb_breq_t;
 
 /* Request numbers follow the Linux kernel driver (drivers/net/can/usb/gs_usb.c);
@@ -58,6 +59,8 @@ typedef enum
 #define GS_CAN_FLAG_ONE_SHOT       (1u << 3)  /* disable auto-retransmission */
 #define GS_CAN_FLAG_HW_TIMESTAMP   (1u << 4)  /* IN frames carry timestamp_us */
 #define GS_CAN_FLAG_FD             (1u << 8)  /* CAN FD mode                 */
+#define GS_CAN_FLAG_BERR_REPORTING (1u << 12) /* send bus-error frames       */
+#define GS_CAN_FLAG_BUS_OFF_RECOVERY (1u << 18) /* host recovers from bus-off  */
 #define GS_CAN_FLAG_AUTO_RESTART   (1u << 31) /* vendor extension: recover from bus-off */
 
 /* -------------------------------------------------------------------------
@@ -71,6 +74,12 @@ typedef enum
 #define GS_CAN_STATE_SLEEPING       5u
 
 /* -------------------------------------------------------------------------
+ * Bus termination (gs_device_termination_state_t.state)
+ * ------------------------------------------------------------------------- */
+#define GS_CAN_TERMINATION_STATE_OFF 0u
+#define GS_CAN_TERMINATION_STATE_ON  1u
+
+/* -------------------------------------------------------------------------
  * Feature flags reported in gs_device_bt_const_t.feature
  * ------------------------------------------------------------------------- */
 #define GS_CAN_FEATURE_LISTEN_ONLY    (1u << 0)
@@ -82,8 +91,15 @@ typedef enum
 #define GS_CAN_FEATURE_USER_ID        (1u << 6)
 #define GS_CAN_FEATURE_FD             (1u << 8)
 #define GS_CAN_FEATURE_BT_CONST_EXT   (1u << 10)
+#define GS_CAN_FEATURE_TERMINATION    (1u << 11)
+#define GS_CAN_FEATURE_BERR_REPORTING (1u << 12)
 #define GS_CAN_FEATURE_GET_STATE      (1u << 13)
-/* Vendor extension (not upstream gs_usb): GS_CAN_FLAG_AUTO_RESTART honoured. */
+/* candleLight_fw extension: the device restarts after bus-off by itself unless
+ * started with GS_CAN_FLAG_BUS_OFF_RECOVERY; then GS_USB_BREQ_BUS_OFF_RECOVERY
+ * restarts it. */
+#define GS_CAN_FEATURE_BUS_OFF_RECOVERY (1u << 18)
+/* Vendor extension (not upstream gs_usb): GS_CAN_FLAG_AUTO_RESTART honoured
+ * (auto restart is the default now, so it only overrides BUS_OFF_RECOVERY). */
 #define GS_CAN_FEATURE_AUTO_RESTART   (1u << 31)
 
 /* -------------------------------------------------------------------------
@@ -226,6 +242,12 @@ typedef struct
     uint32_t rxerr;        /* receive error counter  */
     uint32_t txerr;        /* transmit error counter */
 } gs_device_state_t;
+
+/* Control OUT/IN — GS_USB_BREQ_SET_TERMINATION / GS_USB_BREQ_GET_TERMINATION */
+typedef struct
+{
+    uint32_t state;        /* GS_CAN_TERMINATION_STATE_* */
+} gs_device_termination_state_t;
 
 /* Bulk EP OUT (host→device): frame to transmit on the CAN bus.
  * Bulk EP IN  (device→host): echo of sent frame, received frame, or error frame.

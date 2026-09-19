@@ -114,6 +114,7 @@ static CFG_TUSB_MEM_SECTION CFG_TUSB_MEM_ALIGN union
     gs_device_bittiming_t    bittiming;
     gs_device_mode_t         mode;
     gs_device_state_t        state;
+    gs_device_termination_state_t termination;
     uint32_t                 timestamp;
     uint8_t                  raw[80];
 } _ctrl_buf;
@@ -156,6 +157,11 @@ static bool _out_pending;
 // for that channel carry the 4-byte timestamp_us trailer.
 static bool _hw_timestamp[GS_USB_CAN_CHANNEL_COUNT];
 
+// Per channel: frames were lost (IN queue full, or reported by the engine via
+// gs_usb_report_overflow()); the channel's next queued frame carries
+// GS_FRAME_FLAG_OVERFLOW.  Written from ISR and main-loop context.
+static volatile bool _overflow[GS_USB_CAN_CHANNEL_COUNT];
+
 //--------------------------------------------------------------------+
 // IN queue helpers
 //--------------------------------------------------------------------+
@@ -168,11 +174,21 @@ static bool in_queue_push(const gs_host_frame_t *frame, uint8_t reserve)
     uint8_t avail = (uint8_t)(IN_QUEUE_SIZE - 1u - used);
     if (avail <= reserve)
     {
+        // Tell the host about the loss with the channel's next frame
+        if (frame->channel < GS_USB_CAN_CHANNEL_COUNT)
+        {
+            _overflow[frame->channel] = true;
+        }
         cs_exit(pm);
         return false;
     }
     uint8_t next = (uint8_t)((_in_head + 1u) % IN_QUEUE_SIZE);
     _in_queue[_in_head] = *frame;
+    if (frame->channel < GS_USB_CAN_CHANNEL_COUNT && _overflow[frame->channel])
+    {
+        _in_queue[_in_head].flags |= GS_FRAME_FLAG_OVERFLOW;
+        _overflow[frame->channel] = false;
+    }
     _in_head = next;
     cs_exit(pm);
     return true;
@@ -251,13 +267,21 @@ static uint8_t fd_dlc_to_len(uint8_t dlc)
     return len[dlc & 0x0Fu];
 }
 
-// Feature bits and nominal bit-timing constants, shared by BREQ_BT_CONST and
-// BREQ_BT_CONST_EXT.
-static void bt_const_fill(gs_device_bt_const_t *bt)
+// Feature bits and nominal bit-timing constants of channel `ch`, shared by
+// BREQ_BT_CONST and BREQ_BT_CONST_EXT.
+static void bt_const_fill(uint8_t ch, gs_device_bt_const_t *bt)
 {
+    bool term_on;
+
     // What the engine can actually do is a property of the engine, so the
     // advertised set comes from gs_usb_config.h.
     bt->feature   = GS_USB_FEATURES;
+    // Termination is a board feature: offered only where the engine can
+    // switch it. Linux reads it back at probe and drops it if that fails.
+    if (gs_engine_get_termination(ch, &term_on))
+    {
+        bt->feature |= GS_CAN_FEATURE_TERMINATION;
+    }
     bt->fclk_can  = gs_engine_can_clock_hz();
     bt->tseg1_min = GS_USB_TSEG1_MIN;
     bt->tseg1_max = GS_USB_TSEG1_MAX;
@@ -281,6 +305,7 @@ static void reset_usb_state(void)
     _out_armed  = false;
     _out_pending = false;
     memset(_hw_timestamp, 0, sizeof(_hw_timestamp));
+    memset((void *)_overflow, 0, sizeof(_overflow));
     _usb.ep_in  = 0;
     _usb.ep_out = 0;
 }
@@ -394,8 +419,27 @@ bool gsusb_control_xfer_cb(uint8_t rhport, uint8_t stage,
             return tud_control_xfer(rhport, request, _ctrl_buf.raw,
                                     TU_MIN(request->wLength, sizeof(_ctrl_buf.raw)));
 
-        case GS_USB_BREQ_SET_USER_ID:
         case GS_USB_BREQ_SET_TERMINATION:
+            if (ch >= GS_USB_CAN_CHANNEL_COUNT) return false;
+            _ctrl_ch = ch;
+            memset(&_ctrl_buf.termination, 0, sizeof(_ctrl_buf.termination));
+            return tud_control_xfer(rhport, request,
+                                    &_ctrl_buf, sizeof(gs_device_termination_state_t));
+
+        case GS_USB_BREQ_BUS_OFF_RECOVERY:
+            if (ch >= GS_USB_CAN_CHANNEL_COUNT) return false;
+            // candleLight hosts send it without a data stage; accept a
+            // (ignored) payload too.  false stalls the request.
+            if (request->wLength == 0u)
+            {
+                if (!gs_engine_bus_off_recovery(ch)) return false;
+                return tud_control_status(rhport, request);
+            }
+            _ctrl_ch = ch;
+            return tud_control_xfer(rhport, request, _ctrl_buf.raw,
+                                    TU_MIN(request->wLength, sizeof(_ctrl_buf.raw)));
+
+        case GS_USB_BREQ_SET_USER_ID:
             // Receive and discard — not implemented
             return tud_control_xfer(rhport, request, _ctrl_buf.raw,
                                     TU_MIN(request->wLength, sizeof(_ctrl_buf.raw)));
@@ -414,7 +458,7 @@ bool gsusb_control_xfer_cb(uint8_t rhport, uint8_t stage,
 
         case GS_USB_BREQ_BT_CONST:
             if (ch >= GS_USB_CAN_CHANNEL_COUNT) return false;
-            bt_const_fill(&_ctrl_buf.bt_const);
+            bt_const_fill(ch, &_ctrl_buf.bt_const);
             return tud_control_xfer(rhport, request,
                                     &_ctrl_buf, sizeof(gs_device_bt_const_t));
 
@@ -422,7 +466,7 @@ bool gsusb_control_xfer_cb(uint8_t rhport, uint8_t stage,
             if (ch >= GS_USB_CAN_CHANNEL_COUNT) return false;
             // Linux aborts probing the device if this request fails while
             // GS_CAN_FEATURE_BT_CONST_EXT is advertised.
-            bt_const_fill(&_ctrl_buf.bt_const_ext.nominal);
+            bt_const_fill(ch, &_ctrl_buf.bt_const_ext.nominal);
             _ctrl_buf.bt_const_ext.dtseg1_min = GS_USB_DTSEG1_MIN;
             _ctrl_buf.bt_const_ext.dtseg1_max = GS_USB_DTSEG1_MAX;
             _ctrl_buf.bt_const_ext.dtseg2_min = GS_USB_DTSEG2_MIN;
@@ -447,9 +491,19 @@ bool gsusb_control_xfer_cb(uint8_t rhport, uint8_t stage,
             return tud_control_xfer(rhport, request,
                                     &_ctrl_buf, sizeof(uint32_t));
 
+        case GS_USB_BREQ_GET_TERMINATION:
+        {
+            if (ch >= GS_USB_CAN_CHANNEL_COUNT) return false;
+            bool on;
+            // No switchable termination: stall, so the host drops the feature.
+            if (!gs_engine_get_termination(ch, &on)) return false;
+            _ctrl_buf.termination.state = on ? GS_CAN_TERMINATION_STATE_ON : GS_CAN_TERMINATION_STATE_OFF;
+            return tud_control_xfer(rhport, request,
+                                    &_ctrl_buf, sizeof(gs_device_termination_state_t));
+        }
+
         case GS_USB_BREQ_BERR:
         case GS_USB_BREQ_GET_USER_ID:
-        case GS_USB_BREQ_GET_TERMINATION:
             // Not implemented — return zeros
             memset(_ctrl_buf.raw, 0,
                    TU_MIN(request->wLength, sizeof(_ctrl_buf.raw)));
@@ -486,12 +540,21 @@ bool gsusb_control_xfer_cb(uint8_t rhport, uint8_t stage,
             // it here rather than in the engine.
             _hw_timestamp[_ctrl_ch] = (_ctrl_buf.mode.mode == GS_CAN_MODE_START) &&
                                       ((_ctrl_buf.mode.flags & GS_CAN_FLAG_HW_TIMESTAMP) != 0u);
+            _overflow[_ctrl_ch] = false;   // losses of an earlier session are stale
             gs_engine_set_mode(_ctrl_ch, &_ctrl_buf.mode);
             break;
 
         case GS_USB_BREQ_IDENTIFY:
             gs_engine_identify(_ctrl_ch);
             break;
+
+        case GS_USB_BREQ_SET_TERMINATION:
+            // false stalls the status stage, so the host sees the failure
+            return gs_engine_set_termination(_ctrl_ch,
+                                             _ctrl_buf.termination.state == GS_CAN_TERMINATION_STATE_ON);
+
+        case GS_USB_BREQ_BUS_OFF_RECOVERY:
+            return gs_engine_bus_off_recovery(_ctrl_ch);
 
         default:
             break;
@@ -606,21 +669,43 @@ void gs_usb_task(void)
 
 bool gs_usb_report_frame(const gs_host_frame_t *frame)
 {
-    // Stamp every frame (RX and TX echo) here, so both share one clock.
+    return gs_usb_report_frame_at(frame, gs_engine_timestamp_us());
+}
+
+bool gs_usb_report_frame_at(const gs_host_frame_t *frame, uint32_t timestamp_us)
+{
     gs_host_frame_t stamped = *frame;
     if (stamped.flags & GS_FRAME_FLAG_FD)
     {
-        stamped.fd.timestamp_us = gs_engine_timestamp_us();
+        stamped.fd.timestamp_us = timestamp_us;
     }
     else
     {
-        stamped.classic.timestamp_us = gs_engine_timestamp_us();
+        stamped.classic.timestamp_us = timestamp_us;
     }
 
     bool is_rx = (stamped.echo_id == GS_ECHO_ID_RX) && !(stamped.can_id & GS_CAN_ERR_FLAG);
     bool ok    = in_queue_push(&stamped, is_rx ? IN_QUEUE_RESERVED : 0u);
     in_try_send();
     return ok;
+}
+
+void gs_usb_report_overflow(uint8_t ch)
+{
+    if (ch < GS_USB_CAN_CHANNEL_COUNT)
+    {
+        _overflow[ch] = true;
+    }
+}
+
+void gs_usb_suspend(void)
+{
+    gs_engine_suspend();
+}
+
+void gs_usb_resume(void)
+{
+    gs_engine_resume();
 }
 
 //--------------------------------------------------------------------+
@@ -726,6 +811,58 @@ __attribute__((weak)) uint32_t gs_engine_timestamp_us(void)
 
     const uint32_t load = SysTick->LOAD + 1u;
     return (ms * 1000u) + (((load - 1u - val) * 1000u) / load);
+}
+
+/*
+ * Switch bus termination of channel `ch` on / off (BREQ_SET_TERMINATION).
+ * Return false if the channel has no switchable termination (the default):
+ * the request is then stalled.  A board with a termination switch (GPIO
+ * driving a relay / analog switch across a 120 Ohm resistor) overrides this
+ * and gs_engine_get_termination().
+ */
+__attribute__((weak)) bool gs_engine_set_termination(uint8_t ch, bool on)
+{
+    (void)ch; (void)on;
+    return false;
+}
+
+/*
+ * Read bus termination state of channel `ch` (BREQ_GET_TERMINATION).  Return
+ * false if the channel has no switchable termination (the default): the
+ * request is stalled and GS_CAN_FEATURE_TERMINATION is not advertised.
+ */
+__attribute__((weak)) bool gs_engine_get_termination(uint8_t ch, bool *on)
+{
+    (void)ch; (void)on;
+    return false;
+}
+
+/*
+ * Host-triggered bus-off recovery of channel `ch` (BREQ_BUS_OFF_RECOVERY).
+ * Only valid while the channel runs with GS_CAN_FLAG_BUS_OFF_RECOVERY and is
+ * bus-off; start recovery and report CAN_ERR_RESTARTED once back on the bus.
+ * Return false to stall the request (the default: not supported).
+ */
+__attribute__((weak)) bool gs_engine_bus_off_recovery(uint8_t ch)
+{
+    (void)ch;
+    return false;
+}
+
+/*
+ * USB suspend: take every started channel off the bus, so the device does not
+ * keep ACKing and transmitting while the host sleeps or is gone.
+ */
+__attribute__((weak)) void gs_engine_suspend(void)
+{
+}
+
+/*
+ * USB resume: restart the channels gs_engine_suspend() stopped, with their
+ * previous bit timing and mode.
+ */
+__attribute__((weak)) void gs_engine_resume(void)
+{
 }
 
 /*

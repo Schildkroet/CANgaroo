@@ -104,3 +104,35 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
 #endif
     return false;
 }
+
+/* -------------------------------------------------------------------------
+ * USB bus suspend / resume.  TinyUSB has one weak callback for each, so, like
+ * the vendor requests above, they are defined once here and dispatched.
+ * Both run from tud_task() (main-loop context).
+ * ------------------------------------------------------------------------- */
+void tud_suspend_cb(bool remote_wakeup_en)
+{
+    (void)remote_wakeup_en;
+#if GS_USB_ENABLED
+    gs_usb_suspend();
+#endif
+#if LIN_USB_ENABLED
+    lin_usb_suspend();
+#endif
+#if AIO_USB_ENABLED
+    aio_usb_suspend();
+#endif
+}
+
+void tud_resume_cb(void)
+{
+#if GS_USB_ENABLED
+    gs_usb_resume();
+#endif
+#if LIN_USB_ENABLED
+    lin_usb_resume();
+#endif
+#if AIO_USB_ENABLED
+    aio_usb_resume();
+#endif
+}

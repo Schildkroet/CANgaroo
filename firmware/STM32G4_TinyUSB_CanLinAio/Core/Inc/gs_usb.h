@@ -56,6 +56,9 @@ extern "C" {
 #define GS_USB_BREQ_SET_TERMINATION   12u
 #define GS_USB_BREQ_GET_TERMINATION   13u
 #define GS_USB_BREQ_GET_STATE         14u
+// candleLight_fw extension (not in mainline Linux yet), see
+// GS_CAN_FEATURE_BUS_OFF_RECOVERY
+#define GS_USB_BREQ_BUS_OFF_RECOVERY  32u
 
 //--------------------------------------------------------------------+
 // Device mode (gs_device_mode.mode field)
@@ -74,6 +77,12 @@ extern "C" {
 #define GS_CAN_STATE_SLEEPING         5u
 
 //--------------------------------------------------------------------+
+// Bus termination (gs_device_termination_state.state field)
+//--------------------------------------------------------------------+
+#define GS_CAN_TERMINATION_STATE_OFF  0u
+#define GS_CAN_TERMINATION_STATE_ON   1u
+
+//--------------------------------------------------------------------+
 // Mode flags (gs_device_mode.flags field)
 //--------------------------------------------------------------------+
 #define GS_CAN_FLAG_LISTEN_ONLY       (1u << 0)
@@ -82,6 +91,8 @@ extern "C" {
 #define GS_CAN_FLAG_ONE_SHOT          (1u << 3)
 #define GS_CAN_FLAG_HW_TIMESTAMP      (1u << 4)
 #define GS_CAN_FLAG_FD                (1u << 8)
+#define GS_CAN_FLAG_BERR_REPORTING    (1u << 12)
+#define GS_CAN_FLAG_BUS_OFF_RECOVERY  (1u << 18)   // host recovers from bus-off, see GS_CAN_FEATURE_BUS_OFF_RECOVERY
 #define GS_CAN_FLAG_AUTO_RESTART      (1u << 31)   // vendor extension, see GS_CAN_FEATURE_AUTO_RESTART
 
 //--------------------------------------------------------------------+
@@ -96,12 +107,25 @@ extern "C" {
 #define GS_CAN_FEATURE_USER_ID        (1u << 6)
 #define GS_CAN_FEATURE_FD             (1u << 8)
 #define GS_CAN_FEATURE_BT_CONST_EXT   (1u << 10)
+#define GS_CAN_FEATURE_TERMINATION    (1u << 11)
+#define GS_CAN_FEATURE_BERR_REPORTING (1u << 12)
 #define GS_CAN_FEATURE_GET_STATE      (1u << 13)
 
-// Vendor extension, not part of upstream gs_usb: the channel recovers from
-// bus-off by itself after a fixed delay, enabled per channel with
-// GS_CAN_FLAG_AUTO_RESTART.  Bit 31 is far above the highest upstream bit, so
-// the Linux driver and stock candle_api never set or interpret it.
+// Bus-off recovery.  By default the channel recovers from bus-off by itself
+// after a fixed delay (as candleLight does): mainline Linux cannot restart a
+// gs_usb device and relies on the CAN_ERR_RESTARTED frame that follows.
+//
+// GS_CAN_FEATURE_BUS_OFF_RECOVERY (bit 18, candleLight_fw extension): a host
+// that starts the channel with GS_CAN_FLAG_BUS_OFF_RECOVERY takes over; the
+// channel then stays bus-off until the host sends GS_USB_BREQ_BUS_OFF_RECOVERY
+// or restarts it with MODE.
+#define GS_CAN_FEATURE_BUS_OFF_RECOVERY (1u << 18)
+
+// Private vendor extension, kept for hosts that already use it: explicitly
+// asks for automatic restart (overrides GS_CAN_FLAG_BUS_OFF_RECOVERY).  Since
+// automatic restart became the default it changes nothing on its own.  Bit 31
+// is far above the highest upstream bit, so the Linux driver and stock
+// candle_api never set or interpret it.
 #define GS_CAN_FEATURE_AUTO_RESTART   (1u << 31)
 
 //--------------------------------------------------------------------+
@@ -220,6 +244,12 @@ typedef struct TU_ATTR_PACKED
     uint32_t txerr;         // transmit error counter
 } gs_device_state_t;
 
+// BREQ_SET_TERMINATION / BREQ_GET_TERMINATION payload
+typedef struct TU_ATTR_PACKED
+{
+    uint32_t state;         // GS_CAN_TERMINATION_STATE_*
+} gs_device_termination_state_t;
+
 // Frame exchanged on the bulk endpoints: a 12-byte header followed by the
 // classic (data[8]) or, with GS_FRAME_FLAG_FD, the CAN FD (data[64]) layout.
 // The 4-byte timestamp_us trailer is only on the wire once the host started
@@ -276,8 +306,26 @@ bool gsusb_control_xfer_cb(uint8_t rhport, uint8_t stage,
 
 // Engine -> host: queue a frame (received frame or TX echo) to be streamed to
 // the host over bulk IN.  The CAN engine calls this for every processed frame.
-// Returns false if the queue is full.
+// Returns false if the queue is full.  A frame that does not fit marks its
+// channel as overflowed, and the next frame queued for that channel carries
+// GS_FRAME_FLAG_OVERFLOW, which the host counts as an RX overrun.
 bool gs_usb_report_frame(const gs_host_frame_t *frame);
+
+// Same, with the frame's own timestamp: the time it ended on the bus, taken in
+// the controller interrupt.  gs_usb_report_frame() stamps the frame with the
+// current time instead (gs_engine_timestamp_us()), which is fine for frames the engine
+// generates itself, such as error frames.  Both must use the same clock.
+bool gs_usb_report_frame_at(const gs_host_frame_t *frame, uint32_t timestamp_us);
+
+// Engine -> host: frames of channel `ch` were lost before reaching this
+// driver (controller FIFO or engine queue overrun).  Flags the channel's next
+// frame with GS_FRAME_FLAG_OVERFLOW.
+void gs_usb_report_overflow(uint8_t ch);
+
+// USB bus suspend / resume, called by the tud_suspend_cb() / tud_resume_cb()
+// dispatcher in usb_app_drivers.c.
+void gs_usb_suspend(void);
+void gs_usb_resume(void);
 
 //--------------------------------------------------------------------+
 // CAN engine hooks
@@ -309,6 +357,26 @@ void gs_engine_identify(uint8_t ch);
 
 // Current channel state and error counters (BREQ_GET_STATE).
 void gs_engine_get_state(uint8_t ch, gs_device_state_t *state);
+
+// Switch the channel's bus termination on or off (BREQ_SET_TERMINATION).
+// Return false if the channel has no switchable termination; the request is
+// then stalled.
+bool gs_engine_set_termination(uint8_t ch, bool on);
+
+// Read the channel's bus termination state (BREQ_GET_TERMINATION). Return
+// false if the channel has no switchable termination: GS_CAN_FEATURE_TERMINATION
+// is advertised for a channel only while this succeeds.
+bool gs_engine_get_termination(uint8_t ch, bool *on);
+
+// Host-triggered bus-off recovery (BREQ_BUS_OFF_RECOVERY), only for a channel
+// started with GS_CAN_FLAG_BUS_OFF_RECOVERY and currently bus-off.  Report
+// CAN_ERR_RESTARTED once back on the bus.  Return false to stall the request.
+bool gs_engine_bus_off_recovery(uint8_t ch);
+
+// USB suspend: the host is asleep or gone, so take every started channel off
+// the bus.  Resume: bring them back with the configuration they had.
+void gs_engine_suspend(void);
+void gs_engine_resume(void);
 
 // FDCAN kernel clock in Hz, reported to the host in BREQ_BT_CONST so it can
 // compute bit timing. The engine reads the configured clock tree.

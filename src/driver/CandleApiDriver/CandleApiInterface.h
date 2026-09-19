@@ -91,6 +91,7 @@ private:
     uint64_t _numRx;
     uint64_t _numTx;
     uint64_t _numTxErr;
+    uint64_t _numRxOverruns;
 
     QList<CandleApiTiming> _timings;
     QList<CandleApiTiming> _fdTimings;
