@@ -43,6 +43,12 @@ public:
     uint16_t startBit() const;
     void setStartBit(uint16_t startBit);
 
+    // startBit() is internal: for big-endian signals it is an MSB-first bit index.
+    // These give the numbers as written in the DBC file and as shown by Vector tools.
+    [[nodiscard]] uint16_t dbcStartBit() const;   // DBC "SG_ name : <start>|len@0"
+    [[nodiscard]] uint16_t lsbBitIndex() const;   // Intel-style (byte*8 + bit) position of the LSB
+    [[nodiscard]] QString startBitDescription() const;
+
     uint16_t length() const;
     void setLength(uint16_t length);
 

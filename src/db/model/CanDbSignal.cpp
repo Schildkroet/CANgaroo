@@ -60,6 +60,33 @@ void CanDbSignal::setStartBit(uint16_t startBit)
     _startBit = startBit;
 }
 
+uint16_t CanDbSignal::dbcStartBit() const
+{
+    if (!isBigEndian()) { return _startBit; }
+
+    // The parser conversion (byte*8 + (7 - bit)) is its own inverse.
+    return static_cast<uint16_t>(((_startBit >> 3) * 8) + (7 - (_startBit & 0b111)));
+}
+
+uint16_t CanDbSignal::lsbBitIndex() const
+{
+    if (!isBigEndian()) { return _startBit; }
+
+    const uint16_t last = static_cast<uint16_t>(_startBit + (_length > 0 ? _length - 1 : 0));
+    return static_cast<uint16_t>(((last >> 3) * 8) + (7 - (last & 0b111)));
+}
+
+QString CanDbSignal::startBitDescription() const
+{
+    if (!isBigEndian())
+    {
+        return QObject::tr("Start bit %1 (little-endian, LSB), length %2").arg(_startBit).arg(_length);
+    }
+
+    return QObject::tr("Start bit %1 (big-endian, MSB, as in DBC), LSB at bit %2, length %3")
+        .arg(dbcStartBit()).arg(lsbBitIndex()).arg(_length);
+}
+
 uint16_t CanDbSignal::length() const
 {
     return _length;

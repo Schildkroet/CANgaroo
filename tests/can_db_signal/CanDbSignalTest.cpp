@@ -53,6 +53,9 @@ private slots:
     void unsignedConversionAppliesFactorAndOffset();
     void negativeFactorAndOffset();
 
+    void dbcStartBitRoundTrips_data();
+    void dbcStartBitRoundTrips();
+
     void signExtension_data();
     void signExtension();
 
@@ -333,6 +336,42 @@ void CanDbSignalTest::valueTableLookup()
     QCOMPARE(sig.getValueName(1), QString("On"));
     QCOMPARE(sig.getValueName(15), QString("Invalid"));
     QVERIFY(sig.getValueName(7).isEmpty());
+}
+
+// Issue #42: the internal start bit differs from both the DBC value and the
+// Intel-style LSB position Vector shows. All three describe the same bits.
+void CanDbSignalTest::dbcStartBitRoundTrips_data()
+{
+    QTest::addColumn<int>("dbcStart");
+    QTest::addColumn<int>("length");
+    QTest::addColumn<int>("expectedLsb");
+
+    // ThrottlePos 24|8@0+ from the issue: Vector shows 33.
+    QTest::newRow("24|8")  << 24 << 8  << 33;
+    QTest::newRow("7|16")  << 7  << 16 << 8;
+    QTest::newRow("23|8")  << 23 << 8  << 16;
+    QTest::newRow("0|16")  << 0  << 16 << 17;
+    QTest::newRow("7|1")   << 7  << 1  << 7;
+}
+
+void CanDbSignalTest::dbcStartBitRoundTrips()
+{
+    QFETCH(int, dbcStart);
+    QFETCH(int, length);
+    QFETCH(int, expectedLsb);
+
+    CanDbSignal sig(nullptr);
+    sig.setIsBigEndian(true);
+    sig.setStartBit(motorolaStartBit(static_cast<uint16_t>(dbcStart)));
+    sig.setLength(static_cast<uint16_t>(length));
+
+    QCOMPARE(sig.dbcStartBit(), static_cast<uint16_t>(dbcStart));
+    QCOMPARE(sig.lsbBitIndex(), static_cast<uint16_t>(expectedLsb));
+
+    sig.setIsBigEndian(false);
+    sig.setStartBit(static_cast<uint16_t>(dbcStart));
+    QCOMPARE(sig.dbcStartBit(), static_cast<uint16_t>(dbcStart));
+    QCOMPARE(sig.lsbBitIndex(), static_cast<uint16_t>(dbcStart));
 }
 
 QTEST_APPLESS_MAIN(CanDbSignalTest)

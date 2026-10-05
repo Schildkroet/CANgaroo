@@ -336,6 +336,7 @@ void RawTxWindow::updateSignalTable()
 
             auto *nameItem = new QTableWidgetItem(sig->name());
             nameItem->setFlags(nameItem->flags() & ~Qt::ItemIsEditable);
+            nameItem->setToolTip(sig->startBitDescription());
             _signalTable->setItem(i, 0, nameItem);
 
             _signalTable->setItem(i, 1, new QTableWidgetItem(QString::number(sig->extractPhysicalFromMessage(_can_msg), 'f', 2)));

@@ -90,7 +90,7 @@ static py::dict buildMessageDict(CanDbMessage *dbMsg)
     {
         py::dict s;
         s["name"]         = sig->name().toStdString();
-        s["start_bit"]    = sig->startBit();
+        s["start_bit"]    = sig->dbcStartBit();   // as written in the DBC file
         s["length"]       = sig->length();
         s["is_big_endian"]= sig->isBigEndian();
         s["is_unsigned"]  = sig->isUnsigned();
