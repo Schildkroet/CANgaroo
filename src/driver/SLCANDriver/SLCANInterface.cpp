@@ -284,6 +284,16 @@ void SLCANInterface::open()
     }
     _port->clear();
 
+    // WeAct devices keep binary mode (H1) set by another application across
+    // sessions; this driver only speaks ASCII, so force text mode first (issue #43).
+    if (_manufacturer == Manufacturer::WeActStudio)
+    {
+        writePort("H0\r");
+        if (_port->waitForReadyRead(50))
+            _port->readAll();
+        _port->clear();
+    }
+
     // Close any open CAN channel, then probe whether device sends confirmations.
     // A device that responds to "C\r" with CR is in confirm mode.
     writePort("C\r");
