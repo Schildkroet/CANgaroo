@@ -89,6 +89,20 @@ CandleApiInterface::CandleApiInterface(CandleApiDriver *driver,
         << CandleApiTiming(80000000, 5000000, 875,  1,  12,  2)  // 80M/(1*16)    = 5M,   SP=87.5%
         << CandleApiTiming(80000000, 8000000, 800,  1,   6,  2); // 80M/(1*10)    = 8M,   SP=80.0%
 
+    // Timings for 125MHz (CANnectivity on STM32H7 FDCAN)
+    // total_TQ = 1(sync) + 1(prop) + phase_seg1 + phase_seg2 = 25, SP = 22/25 = 88.0%
+    // bitrate  = 125MHz / (brp * 25). 800k is not reachable (125M/800k = 156.25).
+    _timings
+        << CandleApiTiming(125000000,   10000, 880, 500, 20, 3)  // 125M/(500*25) = 10k
+        << CandleApiTiming(125000000,   20000, 880, 250, 20, 3)  // 125M/(250*25) = 20k
+        << CandleApiTiming(125000000,   50000, 880, 100, 20, 3)  // 125M/(100*25) = 50k
+        << CandleApiTiming(125000000,   83333, 880,  60, 20, 3)  // 125M/(60*25)  = 83.333k
+        << CandleApiTiming(125000000,  100000, 880,  50, 20, 3)  // 125M/(50*25)  = 100k
+        << CandleApiTiming(125000000,  125000, 880,  40, 20, 3)  // 125M/(40*25)  = 125k
+        << CandleApiTiming(125000000,  250000, 880,  20, 20, 3)  // 125M/(20*25)  = 250k
+        << CandleApiTiming(125000000,  500000, 880,  10, 20, 3)  // 125M/(10*25)  = 500k
+        << CandleApiTiming(125000000, 1000000, 880,   5, 20, 3); // 125M/(5*25)   = 1M
+
     // Timings for 48MHz processors (CANable 0.X)
     _timings
         // sample point: 50.0%
@@ -217,6 +231,13 @@ CandleApiInterface::CandleApiInterface(CandleApiDriver *driver,
         << CandleApiTiming(80000000,   4000000, 800,  1, 14,  4)  //  80M/(1*20)   = 4M,  SP=80.0%
         << CandleApiTiming(80000000,   5000000, 812,  1, 11,  3)  //  80M/(1*16)   = 5M,  SP=81.25%
         << CandleApiTiming(80000000,   8000000, 800,  1,  6,  2); //  80M/(1*10)   = 8M,  SP=80.0%
+
+    // 125 MHz (CANnectivity on STM32H7 FDCAN)
+    // 2M, 4M and 8M are not reachable (125M/2M = 62.5 TQ per bit).
+    _fdTimings
+        << CandleApiTiming(125000000,  1000000, 800,  5, 18,  5)  //  125M/(5*25)  = 1M,   SP=80.0%
+        << CandleApiTiming(125000000,  2500000, 800,  2, 18,  5)  //  125M/(2*25)  = 2.5M, SP=80.0%
+        << CandleApiTiming(125000000,  5000000, 800,  1, 18,  5); //  125M/(1*25)  = 5M,   SP=80.0%
 
     // 48 MHz (CANable 0.x — STM32F072)
     _fdTimings
