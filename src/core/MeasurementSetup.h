@@ -73,5 +73,6 @@ signals:
 private:
     QList<MeasurementNetwork*> _networks;
     mutable QHash<uint32_t, CanDbMessage*> _messageCache;
+    mutable QHash<uint32_t, CanDbMessage*> _pgnCache; // J1939 databases, extended messages only
     mutable QHash<uint8_t,  LinFrame*>     _linFrameCache;
 };

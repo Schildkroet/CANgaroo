@@ -37,6 +37,7 @@ shared config; `tests/support/LogStub.cpp` satisfies `core/Log` without `Backend
 | `can_db_signal/`      | raw <-> physical, sign extension, multiplexer gate |
 | `dbc_parser/`         | DBC text to `CanDb`, incl. Motorola start-bit conversion |
 | `can_db/`             | `CanDb::updateFrom` (DBC reload), muxer wiring |
+| `measurement_setup/`  | `MeasurementSetup::findDbMessage`: exact id, J1939 PGN matching, reload (Backend stubbed in `BackendStub.cpp`) |
 | `trace_file_format/`  | export format resolution from extension / name |
 | `trace_line_format/`  | ASC / candump lines, CAN FD DLC table, ASC CAN FD parsing (vectors from python-can) |
 | `pcapng_format/`      | pcapng SHB / IDB / EPB bytes for SocketCAN frames (from the pcapng spec + `linux/can.h`) |

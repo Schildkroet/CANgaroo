@@ -408,6 +408,8 @@ bool DbcParser::parseSection(CanDb &candb, DbcTokenList &tokens) {
                 retval &= parseSectionCm(candb, tokens);
             } else if (sectionName == "VAL_") {
                 retval &= parseSectionVal(candb, tokens);
+            } else if (sectionName == "BA_") {
+                parseSectionBa(candb, tokens);
             } else {
                 skipUntilSectionEnding(tokens);
             }
@@ -686,3 +688,14 @@ bool DbcParser::parseSectionVal(CanDb &candb, DbcParser::DbcTokenList &tokens)
     return true;
 }
 
+void DbcParser::parseSectionBa(CanDb &candb, DbcParser::DbcTokenList &tokens)
+{
+    // Only the global ProtocolType attribute is modelled; every other attribute
+    // is skipped. Never fails, so an unusual BA_ line cannot reject the file.
+    QString name;
+    QString value;
+    if (expectString(tokens, &name) && (name == "ProtocolType") && expectString(tokens, &value)) {
+        candb.setJ1939(value.compare("J1939", Qt::CaseInsensitive) == 0);
+    }
+    skipUntilSectionEnding(tokens);
+}

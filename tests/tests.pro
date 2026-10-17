@@ -16,4 +16,5 @@ SUBDIRS += \
     decoders \
     autosar_e2e \
     ldf_parser \
-    slcan_codec
+    slcan_codec \
+    measurement_setup

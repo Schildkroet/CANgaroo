@@ -99,6 +99,7 @@ void CanDb::updateFrom(CanDb *other)
 {
     this->setVersion(other->getVersion());
     this->setComment(other->getComment());
+    this->setJ1939(other->isJ1939());
 
     for (CanDbMessage *otherMsg : other->getMessageList()) {
         CanDbMessage *myMsg = this->getMessageById(otherMsg->getRaw_id());

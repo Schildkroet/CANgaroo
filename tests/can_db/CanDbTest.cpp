@@ -95,6 +95,7 @@ class CanDbTest : public QObject
 private slots:
     void updateFromCopiesMessagesIntoEmptyDatabase();
     void updateFromCopiesSignalAttributes();
+    void updateFromCopiesJ1939Flag();
     void updateFromWiresUpMuxerOnFirstLoad();
     void updateFromWiresUpNewlyAddedMuxer();
     void updateFromClearsMuxerWhenItDisappears();
@@ -117,6 +118,27 @@ void CanDbTest::updateFromCopiesMessagesIntoEmptyDatabase()
     QCOMPARE(msg->getName(), QString("MuxMsg"));
     QCOMPARE(msg->getDlc(), uint8_t(8));
     QCOMPARE(msg->getSignals().size(), 3);
+}
+
+void CanDbTest::updateFromCopiesJ1939Flag()
+{
+    CanDb source;
+    QVERIFY(parseInto(R"(BO_ 2566844926 M: 8 ECU_A
+ SG_ S : 0|8@1+ (1,0) [0|255] "" ECU_B
+
+BA_ "ProtocolType" "J1939";
+)", source));
+    QVERIFY(source.isJ1939());
+
+    CanDb target;
+    target.updateFrom(&source);
+    QVERIFY(target.isJ1939());
+
+    // A reload from a DBC without the attribute clears it again.
+    CanDb plain;
+    QVERIFY(parseInto(k_muxDbc, plain));
+    target.updateFrom(&plain);
+    QVERIFY(!target.isJ1939());
 }
 
 void CanDbTest::updateFromCopiesSignalAttributes()

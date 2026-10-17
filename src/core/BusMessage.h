@@ -72,6 +72,16 @@ public:
     void setBusType(BusType type);
 
     [[nodiscard]] uint32_t getRawId() const;
+
+    // J1939 parameter group number of a 29-bit identifier: priority and source
+    // address are dropped, and the PDU-specific byte only counts for PDU2 (PF >= 240).
+    [[nodiscard]] static constexpr uint32_t j1939Pgn(uint32_t id) noexcept
+    {
+        const uint32_t pf = (id >> 16) & 0xFFu;
+        const uint32_t ps = (id >> 8) & 0xFFu;
+        const uint32_t pgn = (id >> 24) & 0x3u; // EDP, DP
+        return (pgn << 16) | (pf << 8) | (pf >= 240u ? ps : 0u);
+    }
     void setRawId(const uint32_t raw_id);
 
     [[nodiscard]] uint32_t getId() const;

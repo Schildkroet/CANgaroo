@@ -46,6 +46,8 @@ void MeasurementSetup::clear()
     qDeleteAll(_networks);
     _networks.clear();
     _messageCache.clear();
+    _pgnCache.clear();
+    _linFrameCache.clear();
     emit onSetupChanged();
 }
 
@@ -109,6 +111,7 @@ void MeasurementSetup::removeNetwork(MeasurementNetwork *network)
 void MeasurementSetup::rebuildMessageCache()
 {
     _messageCache.clear();
+    _pgnCache.clear();
     _linFrameCache.clear();
     for (auto *network : _networks) {
         for (const auto &db : network->_canDbs) {
@@ -116,6 +119,15 @@ void MeasurementSetup::rebuildMessageCache()
             for (auto it = msgs.constBegin(); it != msgs.constEnd(); ++it) {
                 // DBC stores extended IDs with bit 31 set; strip it to match BusMessage::getRawId()
                 _messageCache.insert(it.key() & 0x1FFFFFFF, it.value());
+
+                // A J1939 frame carries priority and source address in its identifier,
+                // so the DBC's fixed id rarely matches. First definition of a PGN wins.
+                if (db->isJ1939() && ((it.key() & 0x80000000u) != 0)) {
+                    const uint32_t pgn = BusMessage::j1939Pgn(it.key() & 0x1FFFFFFF);
+                    if (!_pgnCache.contains(pgn)) {
+                        _pgnCache.insert(pgn, it.value());
+                    }
+                }
             }
         }
         for (const auto &lindb : network->_linDbs) {
@@ -152,6 +164,9 @@ CanDbMessage *MeasurementSetup::findDbMessage(const BusMessage &msg) const
     auto it = _messageCache.constFind(msg.getRawId());
     if (it != _messageCache.constEnd()) {
         return it.value();
+    }
+    if (msg.isExtended()) {
+        return _pgnCache.value(BusMessage::j1939Pgn(msg.getId()), nullptr);
     }
     return nullptr;
 }

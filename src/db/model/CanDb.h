@@ -54,6 +54,11 @@ class CanDb
         void setVersion(QString version) { _version = version; }
         QString getVersion() { return _version; }
 
+        // Set by the DBC attribute BA_ "ProtocolType" "J1939"; messages of such a
+        // database are matched by PGN instead of by full CAN identifier.
+        void setJ1939(bool j1939) { _isJ1939 = j1939; }
+        [[nodiscard]] bool isJ1939() const { return _isJ1939; }
+
         CanDbNode *getOrCreateNode(QString node_name);
 
         size_t getNumberOfMessages();
@@ -74,6 +79,7 @@ private:
         QString _path;
         QString _version;
         QString _comment;
+        bool _isJ1939 = false;
         CanDbNodeMap _nodes;
         CanDbMessageList _messages;
 

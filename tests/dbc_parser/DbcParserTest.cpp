@@ -68,6 +68,9 @@ private slots:
     void signedAndUnsignedFlag();
 
     void parsesExtendedIdentifier();
+
+    void protocolTypeFlagsJ1939Database();
+    void otherAttributesAreSkipped();
     void parsesMultiplexer();
     void parsesValueTable();
     void parsesComments();
@@ -224,6 +227,40 @@ void DbcParserTest::parsesExtendedIdentifier()
     QVERIFY(msg != nullptr);
     QCOMPARE(msg->getName(), QString("ExtMsg"));
     QVERIFY((msg->getRaw_id() & 0x80000000u) != 0);
+}
+
+void DbcParserTest::protocolTypeFlagsJ1939Database()
+{
+    CanDb plain;
+    QVERIFY(parse(R"(BO_ 100 Msg: 8 ECU_A
+ SG_ Sig : 0|8@1+ (1,0) [0|255] "" ECU_B
+)", plain));
+    QVERIFY(!plain.isJ1939());
+
+    CanDb j1939;
+    QVERIFY(parse(R"(BO_ 2566844926 Msg: 8 ECU_A
+ SG_ Sig : 0|8@1+ (1,0) [0|255] "" ECU_B
+
+BA_DEF_ "ProtocolType" STRING ;
+BA_DEF_DEF_ "ProtocolType" "";
+BA_ "ProtocolType" "J1939";
+)", j1939));
+    QVERIFY(j1939.isJ1939());
+    QVERIFY(j1939.getMessageById(2566844926u) != nullptr);
+}
+
+void DbcParserTest::otherAttributesAreSkipped()
+{
+    CanDb db;
+    QVERIFY(parse(R"(BO_ 100 Msg: 8 ECU_A
+ SG_ Sig : 0|8@1+ (1,0) [0|255] "" ECU_B
+
+BA_ "BusType" "CAN";
+BA_ "GenMsgCycleTime" BO_ 100 50;
+BA_ "ProtocolType" "CAN";
+)", db));
+    QVERIFY(!db.isJ1939());
+    QVERIFY(db.getMessageById(100) != nullptr);
 }
 
 void DbcParserTest::parsesMultiplexer()

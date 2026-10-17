@@ -45,6 +45,9 @@ private slots:
     void idAndFlagsAreIndependent();
     void rawIdCarriesFlags();
 
+    void j1939PgnIsExtractedFromIdentifier_data();
+    void j1939PgnIsExtractedFromIdentifier();
+
     void setDataSetsLengthAndBytes();
     void byteAccessorsAreBoundsChecked();
     void setDataAtIsBoundsChecked();
@@ -167,6 +170,33 @@ void BusMessageFrameTest::idAndFlagsAreIndependent()
 // MeasurementSetup.cpp:117), while setRawId() stores the word verbatim so that
 // feeding it a DBC raw id -- where bit 31 marks an extended frame -- also sets
 // the extended flag. Pinned here so neither side gets "tidied up" in isolation.
+void BusMessageFrameTest::j1939PgnIsExtractedFromIdentifier_data()
+{
+    QTest::addColumn<uint32_t>("id");
+    QTest::addColumn<uint32_t>("pgn");
+
+    // PGNs from SAE J1939-71/-81; priority and source address vary per frame.
+    QTest::newRow("EEC1 prio3 sa0")      << 0x0CF00400u << 0xF004u;
+    QTest::newRow("EEC1 prio6 sa0x33")   << 0x18F00433u << 0xF004u;
+    QTest::newRow("DM1 prio6 sa0")       << 0x18FECA00u << 0xFECAu;
+    QTest::newRow("DM1 prio6 sa0xFE")    << 0x18FECAFEu << 0xFECAu;
+    QTest::newRow("WBSD DBC id vs bus")  << 0x0CFE48FEu << 0xFE48u;
+    QTest::newRow("WBSD other sa")       << 0x0CFE4811u << 0xFE48u;
+    // PDU1 (PF < 240): PS is the destination address, not part of the PGN.
+    QTest::newRow("address claim to FF") << 0x18EEFF00u << 0xEE00u;
+    QTest::newRow("address claim to 25") << 0x18EE2500u << 0xEE00u;
+    QTest::newRow("request to 17")       << 0x18EA1700u << 0xEA00u;
+    // Data page bit is part of the PGN.
+    QTest::newRow("data page 1")         << 0x19F00400u << 0x1F004u;
+}
+
+void BusMessageFrameTest::j1939PgnIsExtractedFromIdentifier()
+{
+    QFETCH(uint32_t, id);
+    QFETCH(uint32_t, pgn);
+    QCOMPARE(BusMessage::j1939Pgn(id), pgn);
+}
+
 void BusMessageFrameTest::rawIdCarriesFlags()
 {
     BusMessage msg;
