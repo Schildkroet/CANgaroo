@@ -37,12 +37,12 @@ enum {
 };
 
 BusMessage::BusMessage()
-    : _raw_id(0), _dlc(0), _flags(0), _errorFlags{}, _isFD(false), _isBRS(false), _isRX(true), _isShow(true), _busType(BusType::CAN), _interface(0), _u8()
+    : _raw_id(0), _dlc(0), _flags(0), _errorFlags{}, _isFD(false), _isBRS(false), _isESI(false), _isRX(true), _isShow(true), _busType(BusType::CAN), _interface(0), _u8()
 {
 }
 
 BusMessage::BusMessage(uint32_t can_id)
-    : _raw_id(0), _dlc(0), _flags(0), _errorFlags{}, _isFD(false), _isBRS(false), _isRX(true), _isShow(true), _busType(BusType::CAN), _interface(0), _u8()
+    : _raw_id(0), _dlc(0), _flags(0), _errorFlags{}, _isFD(false), _isBRS(false), _isESI(false), _isRX(true), _isShow(true), _busType(BusType::CAN), _interface(0), _u8()
 {
     setId(can_id);
 }
@@ -115,6 +115,14 @@ bool BusMessage::isBRS() const {
 
 void BusMessage::setBRS(const bool isBRS) {
     _isBRS = isBRS;
+}
+
+bool BusMessage::isESI() const {
+    return _isESI;
+}
+
+void BusMessage::setESI(const bool isESI) {
+    _isESI = isESI;
 }
 
 bool BusMessage::isErrorFrame() const {

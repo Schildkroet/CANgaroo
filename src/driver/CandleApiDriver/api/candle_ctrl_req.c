@@ -37,6 +37,9 @@ enum {
     /* 11: BT_CONST_EXT, 12: SET_TERMINATION, 13: GET_TERMINATION (not used here);
      * numbering as in enum gs_usb_breq, Linux drivers/net/can/usb/gs_usb.c */
     CANDLE_BREQ_GET_STATE      = 14,
+    /* 15, 16: SET/GET_FILTER, 17: GET_TDC_CONST, 19: GET_TDC (not used here) */
+    CANDLE_BREQ_SET_TDC        = 18,
+    CANDLE_BREQ_BUS_OFF_RECOVERY = 32,
 };
 
 static void candle_ctrl_logf(const wchar_t *fmt, ...)
@@ -198,6 +201,40 @@ bool candle_ctrl_set_data_bittiming(candle_device_t *dev, uint8_t channel, candl
     );
 
     dev->last_error = rc ? CANDLE_ERR_OK : CANDLE_ERR_SET_BITTIMING;
+    return rc;
+}
+
+bool candle_ctrl_set_tdc(candle_device_t *dev, uint8_t channel, candle_device_tdc_t *data)
+{
+    bool rc = usb_control_msg(
+        dev->winUSBHandle,
+        CANDLE_BREQ_SET_TDC,
+        USB_DIR_OUT|USB_TYPE_VENDOR|USB_RECIP_INTERFACE,
+        channel,
+        dev->interfaceNumber,
+        data,
+        sizeof(*data)
+    );
+
+    dev->last_error = rc ? CANDLE_ERR_OK : CANDLE_ERR_SET_BITTIMING;
+    return rc;
+}
+
+bool candle_ctrl_bus_off_recovery(candle_device_t *dev, uint8_t channel)
+{
+    candle_device_bus_off_recovery_t data = { 0 };
+
+    bool rc = usb_control_msg(
+        dev->winUSBHandle,
+        CANDLE_BREQ_BUS_OFF_RECOVERY,
+        USB_DIR_OUT|USB_TYPE_VENDOR|USB_RECIP_INTERFACE,
+        channel,
+        dev->interfaceNumber,
+        &data,
+        sizeof(data)
+    );
+
+    dev->last_error = rc ? CANDLE_ERR_OK : CANDLE_ERR_SET_DEVICE_MODE;
     return rc;
 }
 

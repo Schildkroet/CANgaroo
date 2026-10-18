@@ -41,6 +41,7 @@ constexpr quint16 LINKTYPE_CAN_SOCKETCAN = 227;
 constexpr quint32 SNAPLEN = 72;
 
 constexpr quint8  CANFD_BRS    = 0x01;
+constexpr quint8  CANFD_ESI    = 0x02;
 
 constexpr quint16 OPT_ENDOFOPT   = 0;
 constexpr quint16 OPT_IF_NAME    = 2;
@@ -106,9 +107,9 @@ QByteArray socketCanFrame(const BusMessage &msg)
 
     const quint8 len = qMin<quint8>(msg.getLength(), fd ? 64 : 8);
     frame[4] = static_cast<char>(len);
-    if (fd && msg.isBRS())
+    if (fd)
     {
-        frame[5] = static_cast<char>(CANFD_BRS);
+        frame[5] = static_cast<char>((msg.isBRS() ? CANFD_BRS : 0) | (msg.isESI() ? CANFD_ESI : 0));
     }
     for (int j = 0; j < len; ++j)
     {

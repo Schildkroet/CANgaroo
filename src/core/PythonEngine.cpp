@@ -133,6 +133,7 @@ PYBIND11_EMBEDDED_MODULE(cangaroo, m)
         .def_property("fd",        &BusMessage::isFD,        &BusMessage::setFD)
         .def_property("rtr",       &BusMessage::isRTR,       &BusMessage::setRTR)
         .def_property("brs",       &BusMessage::isBRS,       &BusMessage::setBRS)
+        .def_property("esi",       &BusMessage::isESI,       &BusMessage::setESI)
         .def_property_readonly("interface_id", &BusMessage::getInterfaceId)
         .def_property_readonly("timestamp",    &BusMessage::getFloatTimestamp)
         .def_property_readonly("is_rx",        &BusMessage::isRX)
@@ -475,6 +476,33 @@ PYBIND11_EMBEDDED_MODULE(cangaroo, m)
         if (!g_activeEngine) { return ""; }
         BusInterface *intf = g_activeEngine->backend().getInterfaceById(interface_id);
         return intf ? intf->getStateText().toStdString() : "";
+    }, py::arg("interface_id"));
+
+    m.def("interface_capabilities", [](uint16_t interface_id) -> py::dict
+    {
+        py::dict d;
+        if (!g_activeEngine) { return d; }
+        BusInterface *intf = g_activeEngine->backend().getInterfaceById(interface_id);
+        if (!intf) { return d; }
+        const uint32_t caps = intf->getCapabilities();
+        d["canfd"]            = (caps & BusInterface::capability_canfd) != 0;
+        d["listen_only"]      = (caps & BusInterface::capability_listen_only) != 0;
+        d["triple_sampling"]  = (caps & BusInterface::capability_triple_sampling) != 0;
+        d["one_shot"]         = (caps & BusInterface::capability_one_shot) != 0;
+        d["auto_restart"]     = (caps & BusInterface::capability_auto_restart) != 0;
+        d["bus_off_recovery"] = (caps & BusInterface::capability_bus_off_recovery) != 0;
+        d["tdc"]              = (caps & BusInterface::capability_tdc) != 0;
+        return d;
+    }, py::arg("interface_id"));
+
+    // Ask the adapter to leave bus-off. Only works when the channel was started with
+    // auto-restart disabled and the adapter supports host-triggered recovery
+    // (see interface_capabilities()["bus_off_recovery"]).
+    m.def("recover_bus_off", [](uint16_t interface_id) -> bool
+    {
+        if (!g_activeEngine) { return false; }
+        BusInterface *intf = g_activeEngine->backend().getInterfaceById(interface_id);
+        return intf && intf->recoverFromBusOff();
     }, py::arg("interface_id"));
 
     // --- Logging ---

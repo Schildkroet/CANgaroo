@@ -310,6 +310,14 @@ uint32_t CandleApiInterface::getCapabilities()
             retval |= BusInterface::capability_auto_restart;
         }
 
+        if (caps.feature & CANDLE_FEATURE_BUS_OFF_RECOVERY) {
+            retval |= BusInterface::capability_bus_off_recovery;
+        }
+
+        if (caps.feature & CANDLE_FEATURE_TDC) {
+            retval |= BusInterface::capability_tdc;
+        }
+
         return retval;
 
     } else {
@@ -510,6 +518,12 @@ void CandleApiInterface::open()
                 } else {
                     flags |= CANDLE_MODE_FD;
                     _isFdEnabled = true;
+                    // Let the firmware derive the transmitter delay compensation
+                    // from the data bit timing; matters for fast data phases.
+                    if ((caps.feature & CANDLE_FEATURE_TDC)
+                        && !candle_channel_set_tdc_auto(_sharedDev->handle, _channel)) {
+                        log_warning(tr("CandleApi: automatic TDC setup failed"));
+                    }
                 }
             }
         } else if (_settings.isCanFD()) {
@@ -779,6 +793,7 @@ bool CandleApiInterface::readMessage(QList<BusMessage> &msglist, unsigned int ti
     const bool isFd = candle_fd_frame_is_fd(&frame);
     msg.setFD(isFd);
     msg.setBRS(isFd && candle_fd_frame_is_brs(&frame));
+    msg.setESI(isFd && (frame.flags & CANDLE_FRAME_FLAG_ESI) != 0);
 
     const uint8_t raw_dlc = candle_fd_frame_dlc(&frame);
     const uint8_t len = isFd ? candle_dlc_to_len(raw_dlc) : raw_dlc;
@@ -821,6 +836,23 @@ uint32_t CandleApiInterface::getState()
         case CANDLE_STATE_BUS_OFF:       return BusInterface::state_bus_off;
         default:                         return BusInterface::state_ok;
     }
+}
+
+bool CandleApiInterface::recoverFromBusOff()
+{
+    candle_capability_t caps;
+    if (!candle_channel_get_capabilities(_sharedDev->handle, _channel, &caps))
+        return false;
+    if (!(caps.feature & CANDLE_FEATURE_BUS_OFF_RECOVERY))
+        return false;
+
+    if (!candle_channel_bus_off_recovery(_sharedDev->handle, _channel))
+    {
+        log_error(tr("CandleApi: bus-off recovery request failed (error %1)")
+            .arg(candle_dev_last_error(_sharedDev->handle)));
+        return false;
+    }
+    return true;
 }
 
 int CandleApiInterface::getNumRxFrames()

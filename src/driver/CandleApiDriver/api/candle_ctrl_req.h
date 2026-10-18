@@ -35,6 +35,17 @@ typedef struct {
     uint32_t rxerr;
     uint32_t txerr;
 } candle_device_state_t;
+
+typedef struct {
+    uint32_t unused;
+} candle_device_bus_off_recovery_t;
+
+typedef struct {
+    uint32_t tdcv;
+    uint32_t tdco;
+    uint32_t tdcf;
+    uint32_t mode;
+} candle_device_tdc_t;
 #pragma pack(pop)
 
 bool candle_ctrl_set_host_format(candle_device_t *dev);
@@ -44,5 +55,7 @@ bool candle_ctrl_get_capability(candle_device_t *dev, uint8_t channel, candle_ca
 bool candle_ctrl_set_bittiming(candle_device_t *dev, uint8_t channel, candle_bittiming_t *data);
 bool candle_ctrl_set_data_bittiming(candle_device_t *dev, uint8_t channel, candle_bittiming_t *data);
 bool candle_ctrl_get_timestamp(candle_device_t *dev, uint32_t *current_timestamp);
+bool candle_ctrl_set_tdc(candle_device_t *dev, uint8_t channel, candle_device_tdc_t *data);
+bool candle_ctrl_bus_off_recovery(candle_device_t *dev, uint8_t channel);
 bool candle_ctrl_get_state(candle_device_t *dev, uint8_t channel, candle_device_state_t *data);
 

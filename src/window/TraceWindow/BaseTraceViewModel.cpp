@@ -255,7 +255,7 @@ QVariant BaseTraceViewModel::data_DisplayRole_Message(const QModelIndex &index, 
             if (currentMsg.isErrorFrame()) {
                 return QStringLiteral("ERR");
             }
-            QString _type = QString(currentMsg.isFD() ? "FD.":"") + QString(currentMsg.isExtended()? "EXT" : "STD") + QString(currentMsg.isRTR()?".RTR":"") + QString((currentMsg.isBRS()?".BRS":""));
+            QString _type = QString(currentMsg.isFD() ? "FD.":"") + QString(currentMsg.isExtended()? "EXT" : "STD") + QString(currentMsg.isRTR()?".RTR":"") + QString((currentMsg.isBRS()?".BRS":"")) + QString((currentMsg.isESI()?".ESI":""));
             return _type;
         }
 

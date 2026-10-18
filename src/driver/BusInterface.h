@@ -76,6 +76,8 @@ public:
         capability_config_os            = 0x020, ///< Configurable OS / timestamp source
         capability_custom_bitrate       = 0x040, ///< Arbitrary CAN nominal bitrate
         capability_custom_canfd_bitrate = 0x080, ///< Arbitrary CAN FD data-phase bitrate
+        capability_bus_off_recovery     = 0x800, ///< Host-triggered recovery, see recoverFromBusOff()
+        capability_tdc                  = 0x1000, ///< Transmitter delay compensation for the CAN FD data phase
         // LIN capabilities
         capability_lin_master           = 0x100, ///< LIN master node (can send headers)
         capability_lin_slave            = 0x200, ///< LIN slave node
@@ -178,6 +180,10 @@ public:
 
     /// Current bus-state code (one of the state_* constants).
     virtual uint32_t getState() = 0;
+
+    /// Ask the hardware to leave bus-off (only meaningful if the driver took over recovery).
+    /// Returns false if unsupported or the request failed.
+    virtual bool recoverFromBusOff() { return false; }
 
     virtual int getNumRxFrames() = 0;   ///< Total received frames since reset
     virtual int getNumRxErrors() = 0;   ///< Receive error count since reset

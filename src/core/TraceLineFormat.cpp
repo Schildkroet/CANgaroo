@@ -110,13 +110,13 @@ QString ascLine(const BusMessage &msg, double tStart, int channel)
     {
         // Vector ASC CAN FD event:
         // <time> CANFD <channel> <Rx|Tx> <id> <BRS> <ESI> <DLC hex> <data length> <data>
-        // ESI is not tracked by BusMessage and is written as 0.
-        return QStringLiteral("%1 CANFD %2 %3 %4 %5 0 %6 %7 %8")
+        return QStringLiteral("%1 CANFD %2 %3 %4 %5 %6 %7 %8 %9")
             .arg(t, 11, 'f', 6)
             .arg(channel, 3)
             .arg(dir)
             .arg(idHexStr, 15)
             .arg(msg.isBRS() ? 1 : 0)
+            .arg(msg.isESI() ? 1 : 0)
             .arg(canFdLengthToDlc(msg.getLength()), 0, 16)
             .arg(msg.getLength())
             .arg(msg.getDataHexString());
@@ -160,7 +160,7 @@ QString canDumpLine(const BusMessage &msg, const QString &interfaceName)
     else if (msg.isFD())
     {
         // CANFD: use ## separator with flags byte (bit 0 = BRS, bit 1 = ESI)
-        const uint8_t flags = msg.isBRS() ? 1 : 0;
+        const uint8_t flags = (msg.isBRS() ? 1 : 0) | (msg.isESI() ? 2 : 0);
         line.append(QStringLiteral(" %1##%2").arg(idHex).arg(flags));
         for (int i = 0; i < msg.getLength(); i++)
         {
@@ -229,6 +229,7 @@ bool parseAscCanFdLine(const QStringList &parts, BusMessage &msg)
 
     int dataLength = -1;
     qsizetype dataIdx = 0;
+    bool esi = false;
 
     // Vector layout: the DLC code must agree with the data length.
     bool dlcOk = false;
@@ -239,6 +240,7 @@ bool parseAscCanFdLine(const QStringList &parts, BusMessage &msg)
     {
         dataLength = len;
         dataIdx = idx + 4;
+        esi = parts[idx + 1] == QLatin1String("1");
     }
     // Legacy cangaroo layout: flags, two reserved zeros, then the byte count twice.
     else if (parts.size() >= idx + 5
@@ -260,6 +262,7 @@ bool parseAscCanFdLine(const QStringList &parts, BusMessage &msg)
 
     msg.setFD(true);
     msg.setBRS((brsOrFlags & 0x1) != 0);
+    msg.setESI(esi);
     msg.setExtended(extended);
     msg.setId(id);
     msg.setRX(parts[3].compare(QLatin1String("Rx"), Qt::CaseInsensitive) == 0);

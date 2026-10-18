@@ -99,6 +99,9 @@ public:
     [[nodiscard]] bool isBRS() const;
     void setBRS(const bool isBRS);
 
+    [[nodiscard]] bool isESI() const;
+    void setESI(const bool isESI);
+
     [[nodiscard]] bool isErrorFrame() const;
     void setErrorFrame(bool isErrorFrame);
 
@@ -174,6 +177,7 @@ private:
     BusErrors _errorFlags;
     bool _isFD;
     bool _isBRS;
+    bool _isESI;
     bool _isRX;
     bool _isShow;
     BusType _busType;

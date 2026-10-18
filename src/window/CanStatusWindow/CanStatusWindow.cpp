@@ -24,14 +24,40 @@
 #include "CanStatusWindow.h"
 #include "ui_CanStatusWindow.h"
 
-#include <QStringList>
-#include <QTimer>
 #include <QDateTime>
+#include <QHeaderView>
+#include <QMenu>
+#include <QTimer>
+#include <QTreeWidget>
+
 #include "core/Backend.h"
 #include "core/MeasurementSetup.h"
 #include "core/MeasurementNetwork.h"
 #include "core/MeasurementInterface.h"
 #include "driver/BusInterface.h"
+#include "driver/CanDriver.h"
+
+namespace
+{
+constexpr int column_name  = 0;
+constexpr int column_value = 1;
+
+QString statLabel(CanStatusWindow::Stat stat)
+{
+    switch (stat)
+    {
+        case CanStatusWindow::Stat::RxFrames:  return QObject::tr("Rx Frames");
+        case CanStatusWindow::Stat::RxErrors:  return QObject::tr("Rx Errors");
+        case CanStatusWindow::Stat::RxOverrun: return QObject::tr("Rx Overrun");
+        case CanStatusWindow::Stat::TxFrames:  return QObject::tr("Tx Frames");
+        case CanStatusWindow::Stat::TxErrors:  return QObject::tr("Tx Errors");
+        case CanStatusWindow::Stat::TxDropped: return QObject::tr("Tx Dropped");
+        case CanStatusWindow::Stat::BusLoad:   return QObject::tr("Load (%)");
+        case CanStatusWindow::Stat::Bits:      return QObject::tr("Bits");
+        default:                               return {};
+    }
+}
+}
 
 CanStatusWindow::CanStatusWindow(QWidget *parent, Backend &backend) :
     ConfigurableWidget(parent),
@@ -43,42 +69,19 @@ CanStatusWindow::CanStatusWindow(QWidget *parent, Backend &backend) :
     _stopTimer->setSingleShot(true);
     connect(_stopTimer, &QTimer::timeout, this, [this]()
     {
-        for (QTreeWidgetItemIterator it(ui->treeWidget); *it; ++it)
-        {
-            (*it)->setData(0, Qt::UserRole, QVariant::fromValue(static_cast<void*>(nullptr)));
-        }
+        // Keep the last values on screen, but stop touching the interfaces.
+        _rows.clear();
         _timer->stop();
     });
 
     ui->setupUi(this);
-    ui->treeWidget->setHeaderLabels(QStringList()
-                                    << tr("Driver") << tr("Interface") << tr("State")
-                                    << tr("Rx Frames") << tr("Rx Errors") << tr("Rx Overrun")
-                                    << tr("Tx Frames") << tr("Tx Errors") << tr("Tx Dropped")
-                                    << tr("Load (%)") << tr("Bits")
-        // << "# Warning" << "# Passive" << "# Bus Off" << " #Restarts"
-    );
-    // Driver width
-    ui->treeWidget->setColumnWidth(0, 100);
-    // Interface width
-    ui->treeWidget->setColumnWidth(1, 110);
-    // State width
-    ui->treeWidget->setColumnWidth(2, 80);
-    // Rx Frame width
-    ui->treeWidget->setColumnWidth(3, 90);
-    // Rx Errors width
-    ui->treeWidget->setColumnWidth(4, 80);
-    // Rx Overrun width
-    ui->treeWidget->setColumnWidth(5, 90);
-    // Tx Frame width
-    ui->treeWidget->setColumnWidth(6, 90);
-    // Tx Errors width
-    ui->treeWidget->setColumnWidth(7, 90);
-    // Tx Dropped width
-    ui->treeWidget->setColumnWidth(8, 90);
-    // Bus Load width
-    ui->treeWidget->setColumnWidth(column_bus_load, 90);
+    ui->treeWidget->setColumnCount(2);
+    ui->treeWidget->setHeaderLabels({tr("Name"), tr("Value")});
+    ui->treeWidget->header()->setSectionResizeMode(column_name, QHeaderView::ResizeToContents);
+    ui->treeWidget->header()->setStretchLastSection(true);
+    ui->treeWidget->setContextMenuPolicy(Qt::CustomContextMenu);
 
+    connect(ui->treeWidget, &QWidget::customContextMenuRequested, this, &CanStatusWindow::showContextMenu);
     connect(&backend, &Backend::beginMeasurement, this, &CanStatusWindow::beginMeasurement);
     connect(&backend, &Backend::endMeasurement, this, &CanStatusWindow::endMeasurement);
     connect(&backend, &Backend::onClearTraceRequested, this, &CanStatusWindow::clearStatistics);
@@ -93,18 +96,21 @@ CanStatusWindow::~CanStatusWindow()
 void CanStatusWindow::retranslateUi()
 {
     ui->retranslateUi(this);
+    ui->treeWidget->setHeaderLabels({tr("Name"), tr("Value")});
 
-    ui->treeWidget->setHeaderLabels(QStringList()
-                                    << tr("Driver") << tr("Interface") << tr("State")
-                                    << tr("Rx Frames") << tr("Rx Errors") << tr("Rx Overrun")
-                                    << tr("Tx Frames") << tr("Tx Errors") << tr("Tx Dropped")
-                                    // << "# Warning" << "# Passive" << "# Bus Off" << " #Restarts"
-                                    );
+    for (const InterfaceRow &row : std::as_const(_rows))
+    {
+        for (size_t i = 0; i < row.stats.size(); ++i)
+        {
+            row.stats[i]->setText(column_name, statLabel(static_cast<Stat>(i)));
+        }
+    }
 }
 
 void CanStatusWindow::beginMeasurement()
 {
     ui->treeWidget->clear();
+    _rows.clear();
     _lastStats.clear();
     _effectiveBitrates.clear();
 
@@ -118,23 +124,34 @@ void CanStatusWindow::beginMeasurement()
         }
     }
 
+    QMap<CanDriver *, QTreeWidgetItem *> driverNodes;
+
     for (auto ifid : backend().getInterfaceList()) {
         BusInterface *intf = backend().getInterfaceById(ifid);
-        QTreeWidgetItem *item = new QTreeWidgetItem(ui->treeWidget);
-        item->setData(0, Qt::UserRole, QVariant::fromValue((void*)intf));
-        item->setText(column_driver, intf->getDriver()->getName());
-        item->setText(column_interface, intf->getName());
+        if (!intf) continue;
 
-        item->setTextAlignment(column_driver, Qt::AlignLeft);
-        item->setTextAlignment(column_interface, Qt::AlignLeft);
-        item->setTextAlignment(column_state, Qt::AlignCenter);
-        for (int i=column_rx_frames; i<column_count; i++)
+        CanDriver *driver = intf->getDriver();
+        QTreeWidgetItem *&driverNode = driverNodes[driver];
+        if (!driverNode)
         {
-            item->setTextAlignment(i, Qt::AlignRight);
+            driverNode = new QTreeWidgetItem(ui->treeWidget);
+            driverNode->setText(column_name, driver ? driver->getName() : tr("Unknown"));
+            QFont f = driverNode->font(column_name);
+            f.setBold(true);
+            driverNode->setFont(column_name, f);
         }
 
-        ui->treeWidget->addTopLevelItem(item);
+        InterfaceRow row{intf, new QTreeWidgetItem(driverNode), {}};
+        row.node->setText(column_name, intf->getName());
+        for (size_t i = 0; i < row.stats.size(); ++i)
+        {
+            row.stats[i] = new QTreeWidgetItem(row.node);
+            row.stats[i]->setText(column_name, statLabel(static_cast<Stat>(i)));
+        }
+        _rows.append(row);
     }
+
+    ui->treeWidget->expandAll();
     _stopTimer->stop();
     update();
     if (!_timer->isActive())
@@ -164,50 +181,84 @@ void CanStatusWindow::clearStatistics()
     update();
 }
 
+void CanStatusWindow::showContextMenu(const QPoint &pos)
+{
+    QTreeWidgetItem *item = ui->treeWidget->itemAt(pos);
+    if (!item)
+    {
+        return;
+    }
+
+    // Stat rows belong to their interface node.
+    BusInterface *intf = nullptr;
+    for (const InterfaceRow &row : std::as_const(_rows))
+    {
+        if (row.node == item || row.node == item->parent())
+        {
+            intf = row.intf;
+            break;
+        }
+    }
+    if (!intf)
+    {
+        return;
+    }
+
+    QMenu menu(this);
+    QAction *recover = menu.addAction(tr("Recover from bus off"));
+    recover->setEnabled((intf->getCapabilities() & BusInterface::capability_bus_off_recovery)
+                        && intf->getState() == BusInterface::state_bus_off);
+    if (menu.exec(ui->treeWidget->viewport()->mapToGlobal(pos)) == recover)
+    {
+        intf->recoverFromBusOff();
+    }
+}
+
 void CanStatusWindow::update()
 {
-    for (QTreeWidgetItemIterator it(ui->treeWidget); *it; ++it)
+    auto setStat = [](const InterfaceRow &row, Stat stat, const QString &text)
     {
-        QTreeWidgetItem *item = *it;
-        BusInterface *intf = static_cast<BusInterface *>(item->data(0, Qt::UserRole).value<void *>());
-        if (intf)
-        {
-            intf->updateStatistics();
-            item->setText(column_state, intf->getStateText());
-            item->setText(column_rx_frames, QString().number(intf->getNumRxFrames()));
-            item->setText(column_rx_errors, QString().number(intf->getNumRxErrors()));
-            item->setText(column_rx_overrun, QString().number(intf->getNumRxOverruns()));
-            item->setText(column_tx_frames, QString().number(intf->getNumTxFrames()));
-            item->setText(column_tx_errors, QString().number(intf->getNumTxErrors()));
-            item->setText(column_tx_dropped, QString().number(intf->getNumTxDropped()));
+        row.stats[static_cast<size_t>(stat)]->setText(column_value, text);
+    };
 
-            // Calculate Bus Load (%)
-            qint64 now = QDateTime::currentMSecsSinceEpoch();
-            uint64_t currentBits = intf->getNumBits();
-             if (_lastStats.contains(intf)) {
-                 InterfaceStats &ls = _lastStats[intf];
-                 qint64 dt = now - ls.lastTime;
-                 if (dt >= 500) { // Update load every ~500ms for stability
-                     uint64_t dbits = currentBits - ls.lastBits;
-                     // value(key, default) would evaluate getBitrate() (a netlink query) on every tick
-                     const auto effective = _effectiveBitrates.constFind(intf);
-                     unsigned bitrate = (effective != _effectiveBitrates.constEnd()) ? effective.value() : intf->getBitrate();
-                     if (bitrate > 0) {
-                         double load = static_cast<double>(dbits) * 1000.0 / static_cast<double>(bitrate) / static_cast<double>(dt) * 100.0;
-                         if (load > 100.0) load = 100.0;
-                         item->setText(column_bus_load, QString("%1%").arg(load, 0, 'f', 1));
-                     } else {
-                         item->setText(column_bus_load, "---");
-                     }
-                     ls.lastBits = currentBits;
-                     ls.lastTime = now;
-                 }
-             } else {
-                 _lastStats[intf] = { currentBits, now };
-                 item->setText(column_bus_load, "0.0%");
-             }
-             item->setText(column_bits, QString::number(currentBits));
+    for (const InterfaceRow &row : std::as_const(_rows))
+    {
+        BusInterface *intf = row.intf;
+        intf->updateStatistics();
+        row.node->setText(column_value, intf->getStateText());
+        setStat(row, Stat::RxFrames,  QString::number(intf->getNumRxFrames()));
+        setStat(row, Stat::RxErrors,  QString::number(intf->getNumRxErrors()));
+        setStat(row, Stat::RxOverrun, QString::number(intf->getNumRxOverruns()));
+        setStat(row, Stat::TxFrames,  QString::number(intf->getNumTxFrames()));
+        setStat(row, Stat::TxErrors,  QString::number(intf->getNumTxErrors()));
+        setStat(row, Stat::TxDropped, QString::number(intf->getNumTxDropped()));
+
+        // Calculate Bus Load (%)
+        qint64 now = QDateTime::currentMSecsSinceEpoch();
+        uint64_t currentBits = intf->getNumBits();
+        if (_lastStats.contains(intf)) {
+            InterfaceStats &ls = _lastStats[intf];
+            qint64 dt = now - ls.lastTime;
+            if (dt >= 500) { // Update load every ~500ms for stability
+                uint64_t dbits = currentBits - ls.lastBits;
+                // value(key, default) would evaluate getBitrate() (a netlink query) on every tick
+                const auto effective = _effectiveBitrates.constFind(intf);
+                unsigned bitrate = (effective != _effectiveBitrates.constEnd()) ? effective.value() : intf->getBitrate();
+                if (bitrate > 0) {
+                    double load = static_cast<double>(dbits) * 1000.0 / static_cast<double>(bitrate) / static_cast<double>(dt) * 100.0;
+                    if (load > 100.0) load = 100.0;
+                    setStat(row, Stat::BusLoad, QString("%1%").arg(load, 0, 'f', 1));
+                } else {
+                    setStat(row, Stat::BusLoad, "---");
+                }
+                ls.lastBits = currentBits;
+                ls.lastTime = now;
+            }
+        } else {
+            _lastStats[intf] = { currentBits, now };
+            setStat(row, Stat::BusLoad, "0.0%");
         }
+        setStat(row, Stat::Bits, QString::number(currentBits));
     }
 }
 
@@ -218,5 +269,5 @@ Backend &CanStatusWindow::backend()
 
 QSize CanStatusWindow::sizeHint() const
 {
-    return QSize(1200, 600);
+    return QSize(400, 600);
 }

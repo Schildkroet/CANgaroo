@@ -708,6 +708,19 @@ bool __stdcall DLL candle_channel_get_state(candle_handle hdev, uint8_t ch, cand
     return true;
 }
 
+bool __stdcall DLL candle_channel_set_tdc_auto(candle_handle hdev, uint8_t ch)
+{
+    candle_device_t *dev = (candle_device_t*)hdev;
+    candle_device_tdc_t tdc = { 0, 0, 0, 1u << 1 }; /* GS_CAN_TDC_MODE_AUTO: firmware computes TDCO */
+    return candle_ctrl_set_tdc(dev, ch, &tdc);
+}
+
+bool __stdcall DLL candle_channel_bus_off_recovery(candle_handle hdev, uint8_t ch)
+{
+    candle_device_t *dev = (candle_device_t*)hdev;
+    return candle_ctrl_bus_off_recovery(dev, ch);
+}
+
 bool __stdcall DLL candle_channel_set_timing(candle_handle hdev, uint8_t ch, candle_bittiming_t *data)
 {
     // TODO ensure device is open, check channel count..

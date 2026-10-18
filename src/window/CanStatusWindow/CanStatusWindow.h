@@ -26,6 +26,9 @@
 #include "driver/BusInterface.h"
 #include <QEvent>
 #include <QMap>
+#include <QPoint>
+
+#include <array>
 
 namespace Ui {
 class CanStatusWindow;
@@ -33,29 +36,19 @@ class CanStatusWindow;
 
 class Backend;
 class QTimer;
+class QTreeWidgetItem;
 
 class CanStatusWindow : public ConfigurableWidget
 {
     Q_OBJECT
 
 public:
-    enum {
-        column_driver,
-        column_interface,
-        column_state,
-        column_rx_frames,
-        column_rx_errors,
-        column_rx_overrun,
-        column_tx_frames,
-        column_tx_errors,
-        column_tx_dropped,
-        column_bus_load,
-        column_bits,
-        column_num_warning,
-        column_num_passive,
-        column_num_busoff,
-        column_num_restarts,
-        column_count
+    /// Statistic rows shown below every interface node.
+    enum class Stat {
+        RxFrames, RxErrors, RxOverrun,
+        TxFrames, TxErrors, TxDropped,
+        BusLoad, Bits,
+        Count
     };
 
 public:
@@ -70,6 +63,7 @@ private slots:
     void endMeasurement();
     void update();
     void clearStatistics();
+    void showContextMenu(const QPoint &pos);
 
 private:
     Ui::CanStatusWindow *ui;
@@ -83,6 +77,13 @@ private:
         uint64_t lastBits;
         qint64 lastTime;
     };
+    struct InterfaceRow {
+        BusInterface *intf;
+        QTreeWidgetItem *node;  ///< interface node; column 1 shows the bus state
+        std::array<QTreeWidgetItem *, static_cast<size_t>(Stat::Count)> stats;
+    };
+    QList<InterfaceRow> _rows;
+
     QMap<void*, InterfaceStats> _lastStats;
     QMap<BusInterface*, unsigned> _effectiveBitrates;
 

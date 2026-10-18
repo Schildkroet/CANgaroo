@@ -85,6 +85,8 @@ enum {
      *  unless started with CANDLE_MODE_BUS_OFF_RECOVERY, which leaves recovery
      *  to the host. */
     CANDLE_FEATURE_BUS_OFF_RECOVERY         = 0x40000,
+    /** CAN channel supports transmitter delay compensation (GS_CAN_FEATURE_TDC). */
+    CANDLE_FEATURE_TDC                      = 0x20000,
 };
 
 /** Vendor extension (CANILFD firmware, not upstream gs_usb): the channel
@@ -262,6 +264,8 @@ bool __stdcall DLL candle_dev_free(candle_handle hdev);
 bool __stdcall DLL candle_channel_count(candle_handle hdev, uint8_t *num_channels);
 bool __stdcall DLL candle_channel_get_capabilities(candle_handle hdev, uint8_t ch, candle_capability_t *cap);
 bool __stdcall DLL candle_channel_get_state(candle_handle hdev, uint8_t ch, candle_can_state_t *state);
+bool __stdcall DLL candle_channel_set_tdc_auto(candle_handle hdev, uint8_t ch);
+bool __stdcall DLL candle_channel_bus_off_recovery(candle_handle hdev, uint8_t ch);
 bool __stdcall DLL candle_channel_set_timing(candle_handle hdev, uint8_t ch, candle_bittiming_t *data);
 bool __stdcall DLL candle_channel_set_bitrate(candle_handle hdev, uint8_t ch, uint32_t bitrate);
 bool __stdcall DLL candle_channel_start(candle_handle hdev, uint8_t ch, uint32_t flags);
