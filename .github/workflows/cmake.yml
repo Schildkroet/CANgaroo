@@ -164,7 +164,7 @@ jobs:
           Section: utils
           Priority: optional
           Architecture: ${PKG_ARCH}
-          Depends: libqt6core6t64, libqt6gui6t64, libqt6widgets6t64, libqt6serialport6, libqt6serialbus6, libqt6charts6, libnl-3-200, libnl-route-3-200, libusb-1.0-0, policykit-1, iproute2
+          Depends: libqt6core6t64 | libqt6core6, libqt6gui6t64 | libqt6gui6, libqt6widgets6t64 | libqt6widgets6, libqt6serialport6, libqt6serialbus6, libqt6charts6, libnl-3-200, libnl-route-3-200, libusb-1.0-0, polkitd | policykit-1, pkexec | policykit-1, iproute2
           Maintainer: Schildkroet <https://github.com/Schildkroet>
           Description: CAN bus analyzer and visualization tool
            CANgaroo is an open-source CAN bus analyzer with support for
