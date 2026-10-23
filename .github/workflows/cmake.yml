@@ -409,17 +409,17 @@ jobs:
       - name: Setup MSYS2 with MinGW + Qt6
         uses: msys2/setup-msys2@v2
         with:
-          msystem: MINGW64
+          msystem: UCRT64
           update: true
           cache: true
           install: >-
-            mingw-w64-x86_64-toolchain
-            mingw-w64-x86_64-qt6
-            mingw-w64-x86_64-qt6-tools
-            mingw-w64-x86_64-make
-            mingw-w64-x86_64-ntldd
-            mingw-w64-x86_64-python
-            mingw-w64-x86_64-pybind11
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-qt6
+            mingw-w64-ucrt-x86_64-qt6-tools
+            mingw-w64-ucrt-x86_64-make
+            mingw-w64-ucrt-x86_64-ntldd
+            mingw-w64-ucrt-x86_64-python
+            mingw-w64-ucrt-x86_64-pybind11
             git
 
       - name: Download PCAN-Basic SDK
@@ -506,29 +506,29 @@ jobs:
 
       - name: Add MinGW runtime DLLs
         run: |
-          cp /mingw64/bin/libgcc_s_seh-1.dll dist/
-          cp /mingw64/bin/libstdc++-6.dll dist/
-          cp /mingw64/bin/libwinpthread-1.dll dist/
-          cp /mingw64/bin/libmd4c.dll dist/
-          cp /mingw64/bin/libharfbuzz-0.dll dist/
-          cp /mingw64/bin/libfreetype-6.dll dist/
-          cp /mingw64/bin/libpng16-16.dll dist/
-          cp /mingw64/bin/zlib1.dll dist/
-          cp /mingw64/bin/libdouble-conversion.dll dist/
-          cp /mingw64/bin/libb2-1.dll dist/
-          cp /mingw64/bin/libicuin78.dll dist/
-          cp /mingw64/bin/libbrotlidec.dll dist/
-          cp /mingw64/bin/libzstd.dll dist/
-          cp /mingw64/bin/libicuuc78.dll dist/
-          cp /mingw64/bin/libpcre2-16-0.dll dist/
+          cp /ucrt64/bin/libgcc_s_seh-1.dll dist/
+          cp /ucrt64/bin/libstdc++-6.dll dist/
+          cp /ucrt64/bin/libwinpthread-1.dll dist/
+          cp /ucrt64/bin/libmd4c.dll dist/
+          cp /ucrt64/bin/libharfbuzz-0.dll dist/
+          cp /ucrt64/bin/libfreetype-6.dll dist/
+          cp /ucrt64/bin/libpng16-16.dll dist/
+          cp /ucrt64/bin/zlib1.dll dist/
+          cp /ucrt64/bin/libdouble-conversion.dll dist/
+          cp /ucrt64/bin/libb2-1.dll dist/
+          cp /ucrt64/bin/libicuin78.dll dist/
+          cp /ucrt64/bin/libbrotlidec.dll dist/
+          cp /ucrt64/bin/libzstd.dll dist/
+          cp /ucrt64/bin/libicuuc78.dll dist/
+          cp /ucrt64/bin/libpcre2-16-0.dll dist/
 
       - name: Add Python runtime
         run: |
           PYVER=$(python3 -c "import sysconfig; print(sysconfig.get_config_var('VERSION'))")
-          cp /mingw64/bin/libpython${PYVER}.dll dist/
+          cp /ucrt64/bin/libpython${PYVER}.dll dist/
           # Bundle the stdlib under lib/pythonX.Y/ — Python finds it when PYTHONHOME=<appdir>
           mkdir -p dist/lib/python${PYVER}
-          cp -r /mingw64/lib/python${PYVER}/* dist/lib/python${PYVER}/ 2>/dev/null || true
+          cp -r /ucrt64/lib/python${PYVER}/* dist/lib/python${PYVER}/ 2>/dev/null || true
           # Remove test and __pycache__ dirs to save space
           find dist/lib/python${PYVER} -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
           find dist/lib/python${PYVER} -type d -name test -exec rm -rf {} + 2>/dev/null || true
@@ -537,10 +537,10 @@ jobs:
         run: |
           EXE=$(ls dist/*.exe | head -n 1)
 
-          echo "Resolving MinGW runtime dependencies for $EXE"
+          echo "Resolving UCRT64 runtime dependencies for $EXE"
 
           ntldd -R "$EXE" \
-            | grep mingw64 \
+            | grep ucrt64 \
             | awk '{print $3}' \
             | sort -u \
             | while IFS= read -r file; do
