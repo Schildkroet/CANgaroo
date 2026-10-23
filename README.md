@@ -65,19 +65,21 @@ The binary will be in `bin/cangaroo`.
 
 #### SocketCAN privileges
 
-CANgaroo uses `ip link` to configure SocketCAN interfaces (bitrate, sample point, CAN FD), which requires `CAP_NET_ADMIN`. The recommended way is a targeted sudoers rule so no password prompt appears:
+CANgaroo uses `ip link` to configure SocketCAN interfaces (bitrate, sample point, CAN FD), which requires `CAP_NET_ADMIN`. When not running as root it calls `ip` through `pkexec` (polkit); it does not use `sudo`, so sudoers rules have no effect.
+
+The `.deb` package installs a polkit rule that lets members of the `netdev` group run exactly the `ip link set <if> down` / `up type can ...` commands CANgaroo generates, without a password prompt. Add yourself to the group:
 
 ```bash
-sudo groupadd cangaroo
-sudo usermod -aG cangaroo $USER
+sudo usermod -aG netdev $USER
 ```
 
-Create `/etc/sudoers.d/cangaroo`:
-```
-%cangaroo ALL=(ALL) NOPASSWD: /sbin/ip link set * down, /sbin/ip link set * up type can *
+When building from source, install the rule yourself:
+
+```bash
+sudo cp packaging/10-cangaroo-socketcan.rules /etc/polkit-1/rules.d/
 ```
 
-Log out and back in for the group membership to take effect. If you prefer not to use a group, you can instead grant `CAP_NET_ADMIN` directly to the `ip` binary (applies to all users):
+Log out and back in for the group membership to take effect. Without the rule, `pkexec` shows a password prompt instead (a polkit authentication agent must be running). Alternatively, grant `CAP_NET_ADMIN` directly to the `ip` binary (applies to all users, who can then run any `ip` command that needs it):
 ```bash
 sudo setcap cap_net_admin+ep /sbin/ip
 ```

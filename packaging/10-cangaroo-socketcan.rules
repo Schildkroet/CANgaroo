@@ -2,17 +2,47 @@
 // via `ip link set` without a password prompt.
 // CANgaroo invokes ip through pkexec when it needs to bring a CAN
 // interface up or down (requires CAP_NET_ADMIN).
+//
+// Only the exact command lines CANgaroo generates are allowed (see
+// SocketCanInterface::applyConfig). Matching on the program alone would let
+// netdev members run `ip netns exec <ns> <cmd>`, i.e. arbitrary commands as root.
 polkit.addRule(function(action, subject) {
-    if (action.id === "org.freedesktop.policykit.exec" &&
-        subject.isInGroup("netdev"))
+    if (action.id !== "org.freedesktop.policykit.exec" ||
+        !subject.isInGroup("netdev"))
     {
-        var prog = action.lookup("program");
-        if (prog === "/sbin/ip"      ||
-            prog === "/bin/ip"       ||
-            prog === "/usr/sbin/ip"  ||
-            prog === "/usr/bin/ip")
-        {
-            return polkit.Result.YES;
-        }
+        return polkit.Result.NOT_HANDLED;
     }
+
+    var prog = action.lookup("program");
+    if (prog !== "/sbin/ip"      &&
+        prog !== "/bin/ip"       &&
+        prog !== "/usr/sbin/ip"  &&
+        prog !== "/usr/bin/ip")
+    {
+        return polkit.Result.NOT_HANDLED;
+    }
+
+    var cmd = action.lookup("command_line");
+    if (typeof cmd !== "string")
+    {
+        return polkit.Result.NOT_HANDLED;
+    }
+
+    var ifname = "[A-Za-z0-9_.:-]{1,15}";
+    var num    = "[0-9]+";
+    var frac   = "[0-9]+(?:\\.[0-9]+)?";
+
+    var down = new RegExp("^\\S+ link set " + ifname + " down$");
+    var up   = new RegExp("^\\S+ link set " + ifname + " up type can" +
+                          " bitrate " + num +
+                          " sample-point " + frac +
+                          "(?: dbitrate " + num + " dsample-point " + frac + " fd on)?" +
+                          " restart-ms " + num + "$");
+
+    if (down.test(cmd) || up.test(cmd))
+    {
+        return polkit.Result.YES;
+    }
+
+    return polkit.Result.NOT_HANDLED;
 });
