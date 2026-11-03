@@ -375,7 +375,7 @@ void UlcInterface::open()
     _rxLineBuffer.clear();
 
     // Stop whatever an earlier session left running, then make sure a uLC is
-    // answering: the VID/PID is ST's generic virtual COM port.
+    // answering: firmware before 3.5 uses ST's generic virtual COM port VID/PID.
     (void)transact(ulc::k_cmdClose);
     const QByteArray fwReply = transact(ulc::k_cmdFwVersion).value_or(QByteArray());
     const QByteArray fw = ulc::parseFirmwareVersion(fwReply);
@@ -525,8 +525,14 @@ bool UlcInterface::isOpen()
 // node publishes. In monitor mode the device is otherwise silent, so a frame
 // goes out once as master header + data (or header only for an RTR message,
 // which another node answers).
+//
+// Commands go out one at a time (see drainTxQueue()), so a sender faster than
+// the device must not grow the queue without bound: a payload update replaces
+// a queued one for the same ID, and one-shot frames are capped.
 void UlcInterface::sendMessage(const BusMessage &msg)
 {
+    constexpr int k_maxQueuedOneShots = 32;
+
     const uint8_t id  = static_cast<uint8_t>(msg.getId() & ulc::k_maxLinId);
     const uint8_t len = std::min<uint8_t>(msg.getLength(), ulc::k_maxDataLen);
 
@@ -534,6 +540,14 @@ void UlcInterface::sendMessage(const BusMessage &msg)
 
     if (_mode == Mode::Monitor)
     {
+        const auto queued = std::count_if(_txQueue.cbegin(), _txQueue.cend(),
+                                          [](const TxEntry &e) { return e.kind == TxKind::OneShot; });
+        if (queued >= k_maxQueuedOneShots)
+        {
+            _txDropped.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+
         const QByteArray cmd = msg.isRTR() ? ulc::encodeHeader(id, len)
                                            : ulc::encodeFrame(id, msg.getData(), len);
         _txQueue.append(TxEntry{cmd, TxKind::OneShot, msg});
@@ -548,7 +562,16 @@ void UlcInterface::sendMessage(const BusMessage &msg)
         return;
     }
 
-    _txQueue.append(TxEntry{ulc::encodeFrame(id, msg.getData(), len), TxKind::PayloadUpdate, msg});
+    // Only the latest data for a slot matters: replace an update still waiting.
+    TxEntry update{ulc::encodeFrame(id, msg.getData(), len), TxKind::PayloadUpdate, msg};
+    auto waiting = std::find_if(_txQueue.begin(), _txQueue.end(), [id](const TxEntry &e) {
+        return e.kind == TxKind::PayloadUpdate && (e.msg.getId() & ulc::k_maxLinId) == id;
+    });
+    if (waiting != _txQueue.end())
+        *waiting = std::move(update);
+    else
+        _txQueue.append(std::move(update));
+
     _sentPayloads.insert(id, QByteArray(reinterpret_cast<const char *>(msg.getData()), len));
 }
 
