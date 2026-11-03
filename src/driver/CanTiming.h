@@ -15,20 +15,20 @@ public:
      */
     CanTiming(unsigned id, unsigned bitrate, unsigned bitrate_fd, unsigned samplePoint);
     CanTiming(unsigned id, unsigned bitrate, unsigned bitrate_fd, unsigned samplePoint, unsigned samplePoint_fd);
-    unsigned getId();
-    unsigned getBitrate();
-    unsigned getBitrateFD();
-    bool isCanFD();
-    unsigned getSamplePoint();
+    unsigned getId() const;
+    unsigned getBitrate() const;
+    unsigned getBitrateFD() const;
+    bool isCanFD() const;
+    unsigned getSamplePoint() const;
     static QString getSamplePointStr(unsigned samplePoint);
-    unsigned getSamplePointFD();
+    unsigned getSamplePointFD() const;
     static QString getSamplePointFDStr(unsigned samplePoint);
 
     /*!
      * \brief getTitle get a brief one-line description of this timing
      * \return description, e.g. "500kBit/s, sample point 87.5%"
      */
-    QString getTitle();
+    QString getTitle() const;
 
 private:
     unsigned _id;

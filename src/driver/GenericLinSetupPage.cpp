@@ -88,7 +88,17 @@ void GenericLinSetupPage::onShowInterfacePage(SetupDialog &dlg, MeasurementInter
     // Baud rate
     populateBaudrates(intf);
     {
-        int idx = ui->cbBaudrate->findData(_mi->linBaudRate());
+        // Keep a configured rate the interface does not list (e.g. from an older
+        // config) instead of silently replacing it with the first entry.
+        const unsigned baud = _mi->linBaudRate();
+        int idx = ui->cbBaudrate->findData(baud);
+        if (idx < 0 && baud > 0)
+        {
+            idx = 0;
+            while (idx < ui->cbBaudrate->count() && ui->cbBaudrate->itemData(idx).toUInt() < baud)
+                ++idx;
+            ui->cbBaudrate->insertItem(idx, QString::number(baud), baud);
+        }
         ui->cbBaudrate->setCurrentIndex(idx >= 0 ? idx : 0);
     }
 
@@ -155,7 +165,7 @@ void GenericLinSetupPage::populateBaudrates(BusInterface *intf)
     QList<unsigned> baudrates;
     if (intf)
     {
-        for (CanTiming &timing : intf->getAvailableBitrates())
+        for (const auto &timing : intf->getAvailableBitrates())
         {
             const unsigned br = timing.getBitrate();
             if (br > 20000)

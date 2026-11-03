@@ -563,10 +563,22 @@ void UlcInterface::sendMessage(const BusMessage &msg)
     }
 
     // Only the latest data for a slot matters: replace an update still waiting.
+    // Only after the last queued schedule command, though: a table switch
+    // reloads the slot with the data known when it was queued, so an update in
+    // front of it would be overwritten again by older data.
     TxEntry update{ulc::encodeFrame(id, msg.getData(), len), TxKind::PayloadUpdate, msg};
-    auto waiting = std::find_if(_txQueue.begin(), _txQueue.end(), [id](const TxEntry &e) {
-        return e.kind == TxKind::PayloadUpdate && (e.msg.getId() & ulc::k_maxLinId) == id;
-    });
+    auto waiting = _txQueue.end();
+    for (auto it = _txQueue.end(); it != _txQueue.begin();)
+    {
+        --it;
+        if (it->kind == TxKind::Control)
+            break;
+        if (it->kind == TxKind::PayloadUpdate && (it->msg.getId() & ulc::k_maxLinId) == id)
+        {
+            waiting = it;
+            break;
+        }
+    }
     if (waiting != _txQueue.end())
         *waiting = std::move(update);
     else

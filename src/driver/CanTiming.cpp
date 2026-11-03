@@ -18,27 +18,27 @@ CanTiming::CanTiming(unsigned id, unsigned bitrate, unsigned bitrate_fd, unsigne
 }
 
 
-unsigned CanTiming::getId()
+unsigned CanTiming::getId() const
 {
     return _id;
 }
 
-unsigned CanTiming::getBitrate()
+unsigned CanTiming::getBitrate() const
 {
     return _bitrate;
 }
 
-unsigned CanTiming::getBitrateFD()
+unsigned CanTiming::getBitrateFD() const
 {
     return _bitrate_fd;
 }
 
-bool CanTiming::isCanFD()
+bool CanTiming::isCanFD() const
 {
     return _bitrate_fd != 0;
 }
 
-unsigned CanTiming::getSamplePoint()
+unsigned CanTiming::getSamplePoint() const
 {
     return _samplePoint;
 }
@@ -48,7 +48,7 @@ QString CanTiming::getSamplePointStr(unsigned samplePoint)
     return QString::number(samplePoint/10.0, 'f', 1).append("%");
 }
 
-unsigned CanTiming::getSamplePointFD()
+unsigned CanTiming::getSamplePointFD() const
 {
     return _samplePoint_fd;
 }
@@ -58,7 +58,7 @@ QString CanTiming::getSamplePointFDStr(unsigned samplePoint)
     return QString::number(samplePoint/10.0, 'f', 1).append("%");
 }
 
-QString CanTiming::getTitle()
+QString CanTiming::getTitle() const
 {
     QString format = isCanFD() ? "%1/%3(FD) kBit/s, sample point %2" : "%1 kBit/s, sample point %2";
     return format.arg(
