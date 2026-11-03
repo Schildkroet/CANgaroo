@@ -29,6 +29,7 @@
 #include <optional>
 
 #include <QByteArray>
+#include <QElapsedTimer>
 #include <QList>
 #include <QMap>
 #include <QMutex>
@@ -92,7 +93,7 @@ private:
     struct TxEntry
     {
         QByteArray cmd;
-        TxKind kind;
+        TxKind kind{TxKind::Control};
         BusMessage msg;
     };
 
@@ -128,8 +129,10 @@ private:
     // Last payload sent per published ID, reused when the schedule is reloaded (_txMutex)
     QMap<uint8_t, QByteArray> _sentPayloads;
 
-    // Commands sent but not answered yet -- only accessed from BusListener thread
+    // Commands sent but not answered yet -- only accessed from BusListener thread.
+    // The firmware takes one command at a time, so this holds at most one entry.
     QList<TxEntry> _txPendingReply;
+    QElapsedTimer _replyTimer;  // started when the pending command was written
     // ID of the empty echo expected after a one-shot frame, -1 if none (BusListener thread)
     int _swallowEmptyId{-1};
 

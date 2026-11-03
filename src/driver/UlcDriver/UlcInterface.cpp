@@ -562,17 +562,37 @@ void UlcInterface::setLinScheduleTable(uint8_t tableIndex)
     _publishedIds = published;
 }
 
-// Called from readMessage -- drains the TX queue (no mutex held while writing).
+// Called from readMessage -- sends the next queued command (no mutex held while writing).
+//
+// The firmware keeps a single command buffer: a command that arrives before the
+// previous one has been answered overwrites it, and is lost. So only one command
+// is in flight; the next goes out once the reply arrived or this one timed out.
 void UlcInterface::drainTxQueue()
 {
-    QList<TxEntry> toSend;
+    constexpr qint64 k_replyTimeoutMs = 500;
+
+    if (!_txPendingReply.isEmpty())
     {
-        QMutexLocker lock(&_txMutex);
-        toSend = std::move(_txQueue);
+        if (_replyTimer.elapsed() < k_replyTimeoutMs)
+            return;
+
+        const TxEntry lost = _txPendingReply.takeFirst();
+        if (lost.kind == TxKind::Control)
+            log_warning(tr("uLC: no reply to %1").arg(QString::fromLatin1(lost.cmd.trimmed())));
+        else
+            _txErrors.fetch_add(1, std::memory_order_relaxed);
     }
 
-    for (auto &entry : toSend)
+    for (;;)
     {
+        TxEntry entry;
+        {
+            QMutexLocker lock(&_txMutex);
+            if (_txQueue.isEmpty())
+                return;
+            entry = _txQueue.takeFirst();
+        }
+
         if (entry.cmd.isEmpty())
         {
             _txDropped.fetch_add(1, std::memory_order_relaxed);
@@ -590,6 +610,8 @@ void UlcInterface::drainTxQueue()
         }
 
         _txPendingReply.append(std::move(entry));
+        _replyTimer.start();
+        return;
     }
 }
 
@@ -730,7 +752,11 @@ bool UlcInterface::readMessage(QList<BusMessage> &msglist, unsigned int timeout_
         _isOffline = true;
         _isOpen    = false;
         _state     = state_bus_off;
+        return !msglist.isEmpty();
     }
+
+    // A reply may have freed the device for the next queued command.
+    drainTxQueue();
 
     return !msglist.isEmpty();
 }
