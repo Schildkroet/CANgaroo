@@ -153,25 +153,54 @@ QByteArray UlcInterface::defaultPayload(uint8_t id, uint8_t len) const
 QList<QByteArray> UlcInterface::masterTableCommands(const LinDb &ldb, int tableIndex,
                                                     QSet<uint8_t> &published) const
 {
-    QList<QByteArray> cmds;
+    struct Slot
+    {
+        LinScheduleEntry entry;
+        unsigned delayMs;
+    };
+
+    QList<Slot> slotList;
     QSet<uint8_t> seen;
+    int repeated = 0;
     int dropped = 0;
 
     for (const LinScheduleEntry &le : ldb.scheduleTableEntries(tableIndex))
     {
-        // The firmware keys rows by frame ID: a second slot for the same frame
-        // would only overwrite the first one's timing.
-        if (seen.contains(le.frameId))
-            continue;
-        if (cmds.size() >= ulc::k_maxScheduleSlots)
+        // The firmware keys rows by frame ID, so a frame can only have one slot,
+        // and it has a fixed number of slots. A slot that cannot be uploaded
+        // gives its time to the slot before it: the cycle keeps the LDF's length,
+        // only the skipped frame goes out less often.
+        const bool isRepeat = seen.contains(le.frameId);
+        if (isRepeat || slotList.size() >= ulc::k_maxScheduleSlots)
         {
-            dropped++;
+            (isRepeat ? repeated : dropped)++;
+            if (!slotList.isEmpty())
+                slotList.last().delayMs += le.delayMs;
             continue;
         }
         seen.insert(le.frameId);
+        slotList.append(Slot{le, le.delayMs});
+    }
 
+    if (repeated > 0)
+    {
+        log_warning(tr("uLC: schedule table %1 repeats %2 frame(s); the device keeps one slot per frame ID, "
+                       "so those frames go out less often than in the LDF (cycle time is kept)")
+                        .arg(tableIndex).arg(repeated));
+    }
+    if (dropped > 0)
+    {
+        log_warning(tr("uLC: schedule table %1 has more frames than the device's %2 slots, %3 frame(s) not scheduled")
+                        .arg(tableIndex).arg(ulc::k_maxScheduleSlots).arg(dropped));
+    }
+
+    QList<QByteArray> cmds;
+    for (const Slot &slot : std::as_const(slotList))
+    {
+        const LinScheduleEntry &le = slot.entry;
         const QByteArray payload = defaultPayload(le.frameId, le.dlc);
-        const uint8_t delayMs = std::max<uint8_t>(le.delayMs, 1);
+        // One byte on the wire; a merged delay beyond that is clamped.
+        const uint8_t delayMs = static_cast<uint8_t>(std::clamp(slot.delayMs, 1u, 255u));
         const uint8_t timeoutMs = ulc::responseTimeoutMs(le.dlc, _settings.linBaudRate());
 
         const QByteArray cmd = ulc::encodeScheduleSlot(
@@ -183,12 +212,6 @@ QList<QByteArray> UlcInterface::masterTableCommands(const LinDb &ldb, int tableI
         cmds.append(cmd);
         if (le.isMasterPublisher)
             published.insert(le.frameId);
-    }
-
-    if (dropped > 0)
-    {
-        log_warning(tr("uLC: schedule table %1 has more frames than the device's %2 slots, %3 frame(s) not scheduled")
-                        .arg(tableIndex).arg(ulc::k_maxScheduleSlots).arg(dropped));
     }
     return cmds;
 }

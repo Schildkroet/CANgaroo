@@ -10,3 +10,5 @@ HEADERS  += \
     $$PWD/UlcDriver.h
 
 FORMS +=
+
+win32:LIBS += -lsetupapi -lcfgmgr32

@@ -86,6 +86,7 @@ void GenericLinSetupPage::onShowInterfacePage(SetupDialog &dlg, MeasurementInter
     _enableUiUpdates = false;
 
     // Baud rate
+    populateBaudrates(intf);
     {
         int idx = ui->cbBaudrate->findData(_mi->linBaudRate());
         ui->cbBaudrate->setCurrentIndex(idx >= 0 ? idx : 0);
@@ -147,11 +148,31 @@ void GenericLinSetupPage::onLdfSelected(int index)
     updateUI();
 }
 
-void GenericLinSetupPage::populateBaudrates()
+void GenericLinSetupPage::populateBaudrates(BusInterface *intf)
 {
-    static const unsigned baudrates[] = { 1000, 2400, 4800, 9600, 19200, 20000 };
+    // Rates the interface offers for LIN. LIN runs at up to 20 kbit/s, so a list
+    // with faster rates is BusInterface's CAN default, not a LIN list.
+    QList<unsigned> baudrates;
+    if (intf)
+    {
+        for (CanTiming &timing : intf->getAvailableBitrates())
+        {
+            const unsigned br = timing.getBitrate();
+            if (br > 20000)
+            {
+                baudrates.clear();
+                break;
+            }
+            if (!baudrates.contains(br))
+                baudrates.append(br);
+        }
+    }
+
+    if (baudrates.isEmpty())
+        baudrates = { 1000, 2400, 4800, 9600, 19200, 20000 };
+
     ui->cbBaudrate->clear();
-    for (unsigned br : baudrates)
+    for (unsigned br : std::as_const(baudrates))
         ui->cbBaudrate->addItem(QString::number(br), br);
 }
 
