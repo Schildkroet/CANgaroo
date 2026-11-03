@@ -55,7 +55,7 @@ private:
     bool                     _enableUiUpdates;
     uint32_t                 _linCaps{0};
 
-    void populateBaudrates();
+    void populateBaudrates(BusInterface *intf = nullptr);
     void populateProtocolVersions();
     void populateLdfCombo();
     void updateLdfInfo(int ldfIndex);

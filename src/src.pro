@@ -60,6 +60,7 @@ unix:include($$PWD/driver/SocketCanDriver/SocketCanDriver.pri)
 
 include($$PWD/driver/CANBlastDriver/CANBlastDriver.pri)
 include($$PWD/driver/SLCANDriver/SLCANDriver.pri)
+include($$PWD/driver/UlcDriver/UlcDriver.pri)
 include($$PWD/driver/GrIPDriver/GrIPDriver.pri)
 # USB transport shared by the Linde and aiode drivers: libusb on Linux/macOS,
 # WinUSB on Windows. Included once here, not from the driver .pri files.
