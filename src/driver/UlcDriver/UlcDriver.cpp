@@ -110,22 +110,30 @@ bool UlcDriver::update()
 
     for (const auto &info : QSerialPortInfo::availablePorts())
     {
-        // The uLC uses ST's virtual COM port VID/PID, shared with WeAct USB2CAN
-        // (serial "AAA...", handled by the SLCAN driver) and other STM32 boards.
-        if (info.vendorIdentifier() != 0x0483 || info.productIdentifier() != 0x5740)
-            continue;
-        if (info.serialNumber().startsWith("AAA"))
-            continue;
+        const uint16_t vid = info.vendorIdentifier();
+        const uint16_t pid = info.productIdentifier();
 
-        // Match the USB product string. UlcInterface::open() also checks the
-        // firmware's version reply as a second safeguard.
+        // Firmware 3.5 and later has its own ID from pid.codes.
+        const bool ownId = vid == 0x1209 && pid == 0x2779;
+
+        // Older firmware uses ST's virtual COM port VID/PID, shared with WeAct
+        // USB2CAN (serial "AAA...", handled by the SLCAN driver) and other STM32
+        // boards, so there the USB product string has to match as well.
+        // UlcInterface::open() also checks the firmware's version reply.
+        if (!ownId)
+        {
+            if (vid != 0x0483 || pid != 0x5740)
+                continue;
+            if (info.serialNumber().startsWith("AAA"))
+                continue;
 #ifdef Q_OS_WIN
-        const QString product = usbProductString(info.portName());
+            const QString product = usbProductString(info.portName());
 #else
-        const QString product = info.description();
+            const QString product = info.description();
 #endif
-        if (!product.contains("LinUSBConverter"))
-            continue;
+            if (!product.contains("LinUSBConverter"))
+                continue;
+        }
 
         std::cout << "   ++ uLC detected: " << info.portName().toStdString() << '\n';
         createOrUpdateInterface(ifaceIdx++, info.portName());
