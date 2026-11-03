@@ -156,6 +156,18 @@ inline void appendHexByte(QByteArray &out, uint8_t b)
     return QByteArray::number(major) + '.' + QByteArray::number(minor);
 }
 
+// "v0303" -> 0x0303, for comparing versions; -1 if not a firmware version reply.
+[[nodiscard]] inline int parseFirmwareVersionCode(const QByteArray &line) noexcept
+{
+    if (line.size() != 5 || line.at(0) != 'v') { return -1; }
+    return parseHex(line, 1, 4);
+}
+
+// Firmware from 3.4 on measures a master slot's delay from the start of the
+// previous slot's header, as an LDF does. Older firmware starts it when the
+// previous frame has ended.
+constexpr int k_fwSlotDelayFromFrameStart = 0x0304;
+
 // Baud rate command. 9600 and 19200 use the classic S commands every firmware
 // knows; anything else needs the t04 command of firmware 3.x. Empty if the
 // rate does not fit the command.
@@ -204,6 +216,15 @@ inline void appendHexByte(QByteArray &out, uint8_t b)
     cmd.append(hexNibble(len));
     cmd.append('\r');
     return cmd;
+}
+
+// Nominal time on the bus of a frame with `len` data bytes, in whole ms
+// (rounded): break, sync and PID (34 bits) plus data and checksum, 10 bits each.
+[[nodiscard]] constexpr unsigned frameTimeMs(uint8_t len, unsigned baud) noexcept
+{
+    if (baud == 0) { return 0; }
+    const unsigned bits = 34u + 10u * (len + 1u);
+    return (bits * 1000u + baud / 2u) / baud;
 }
 
 // Response timeout the firmware itself uses for rows without one: 1.4 times

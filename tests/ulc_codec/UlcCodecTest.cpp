@@ -53,6 +53,7 @@ private slots:
     void recognisesFrameAcks();
     void parsesFirmwareVersion();
     void rejectsMalformedFirmwareVersion();
+    void parsesFirmwareVersionCode();
 
     void encodesStandardBaudRates();
     void encodesCustomBaudRate();
@@ -69,6 +70,7 @@ private slots:
     void encodesSubscriberSlot();
     void slotFieldsSitWhereFirmwareParsesThem();
     void responseTimeoutMatchesFirmware();
+    void frameTime();
 };
 
 void UlcCodecTest::decodesDataFrame()
@@ -316,6 +318,27 @@ void UlcCodecTest::responseTimeoutMatchesFirmware()
     QCOMPARE(ulc::responseTimeoutMs(8, 2400), uint8_t(73));
     QCOMPARE(ulc::responseTimeoutMs(8, 0), uint8_t(0xFF));
     QCOMPARE(ulc::responseTimeoutMs(8, 100), uint8_t(0xFF));   // clamped to one byte
+}
+
+void UlcCodecTest::parsesFirmwareVersionCode()
+{
+    QCOMPARE(ulc::parseFirmwareVersionCode("v0303"), 0x0303);
+    QCOMPARE(ulc::parseFirmwareVersionCode("v0304"), 0x0304);
+    QVERIFY(ulc::parseFirmwareVersionCode("v0303") < ulc::k_fwSlotDelayFromFrameStart);
+    QVERIFY(ulc::parseFirmwareVersionCode("v0400") >= ulc::k_fwSlotDelayFromFrameStart);
+    QCOMPARE(ulc::parseFirmwareVersionCode("V0303"), -1);
+    QCOMPARE(ulc::parseFirmwareVersionCode("v03"), -1);
+    QCOMPARE(ulc::parseFirmwareVersionCode(""), -1);
+}
+
+// Break + sync + PID (34 bits) and data + checksum (10 bits each), rounded.
+void UlcCodecTest::frameTime()
+{
+    QCOMPARE(ulc::frameTimeMs(4, 19200), 4u);   // 84 bits = 4.38 ms
+    QCOMPARE(ulc::frameTimeMs(8, 19200), 6u);   // 124 bits = 6.46 ms
+    QCOMPARE(ulc::frameTimeMs(0, 19200), 2u);   // 44 bits = 2.29 ms
+    QCOMPARE(ulc::frameTimeMs(8, 9600), 13u);   // 12.92 ms
+    QCOMPARE(ulc::frameTimeMs(8, 0), 0u);
 }
 
 QTEST_APPLESS_MAIN(UlcCodecTest)

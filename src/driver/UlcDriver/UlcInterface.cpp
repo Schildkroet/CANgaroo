@@ -194,14 +194,28 @@ QList<QByteArray> UlcInterface::masterTableCommands(const LinDb &ldb, int tableI
                         .arg(tableIndex).arg(ulc::k_maxScheduleSlots).arg(dropped));
     }
 
+    // The firmware waits a row's delay *before* sending it, counted from the
+    // previous slot, while an LDF delay is the time *after* a slot until the
+    // next one. So each row gets the delay of the slot before it (the table
+    // wraps). Firmware before 3.4 starts that wait only once the previous frame
+    // has ended, so there the previous frame's own time is taken off.
+    const unsigned baud = _settings.linBaudRate();
+    const bool waitFromFrameEnd = _fwVersionCode < ulc::k_fwSlotDelayFromFrameStart;
+
     QList<QByteArray> cmds;
-    for (const Slot &slot : std::as_const(slotList))
+    for (int i = 0; i < slotList.size(); ++i)
     {
-        const LinScheduleEntry &le = slot.entry;
+        const LinScheduleEntry &le = slotList[i].entry;
+        const Slot &prev = slotList[(i + slotList.size() - 1) % slotList.size()];
+
+        unsigned waitMs = prev.delayMs;
+        if (waitFromFrameEnd)
+            waitMs -= std::min(waitMs, ulc::frameTimeMs(prev.entry.dlc, baud));
+
         const QByteArray payload = defaultPayload(le.frameId, le.dlc);
         // One byte on the wire; a merged delay beyond that is clamped.
-        const uint8_t delayMs = static_cast<uint8_t>(std::clamp(slot.delayMs, 1u, 255u));
-        const uint8_t timeoutMs = ulc::responseTimeoutMs(le.dlc, _settings.linBaudRate());
+        const uint8_t delayMs = static_cast<uint8_t>(std::clamp(waitMs, 1u, 255u));
+        const uint8_t timeoutMs = ulc::responseTimeoutMs(le.dlc, baud);
 
         const QByteArray cmd = ulc::encodeScheduleSlot(
             le.frameId, le.dlc, le.isMasterPublisher,
@@ -363,7 +377,9 @@ void UlcInterface::open()
     // Stop whatever an earlier session left running, then make sure a uLC is
     // answering: the VID/PID is ST's generic virtual COM port.
     (void)transact(ulc::k_cmdClose);
-    const QByteArray fw = ulc::parseFirmwareVersion(transact(ulc::k_cmdFwVersion).value_or(QByteArray()));
+    const QByteArray fwReply = transact(ulc::k_cmdFwVersion).value_or(QByteArray());
+    const QByteArray fw = ulc::parseFirmwareVersion(fwReply);
+    _fwVersionCode = ulc::parseFirmwareVersionCode(fwReply);
     if (fw.isEmpty())
     {
         log_error(tr("uLC: no uLC firmware answered on %1").arg(_name));

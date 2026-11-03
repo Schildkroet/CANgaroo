@@ -115,6 +115,7 @@ private:
     int _idx;
     QString _name;
     QString _version;
+    int _fwVersionCode{-1};  // e.g. 0x0304 for firmware 3.4, read on open()
     MeasurementInterface _settings;
     Mode _mode{Mode::Monitor};
 
