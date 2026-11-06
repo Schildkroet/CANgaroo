@@ -28,6 +28,7 @@
 #include <QStyleFactory>
 #include <QTranslator>
 
+#include <QCommandLineParser>
 
 #if defined(__linux__)
 // Returns true if a Qt plugin whose file name contains `needle` exists in the
@@ -88,7 +89,41 @@ int main(int argc, char *argv[])
     QCoreApplication::setOrganizationDomain("CANgaroo/Schildkroet");
     QCoreApplication::setApplicationName("CANgaroo");
 
+    // Kommandozeilen-Parser
+    QCommandLineParser parser;
+    parser.setApplicationDescription("CANgaroo CAN Bus Analyzer");
+    parser.addHelpOption();
+    parser.addVersionOption();
+
+    // Workspace-Option
+    QCommandLineOption workspaceOption(
+        QStringList() << "w" << "workspace",
+        "Load workspace from file.",
+        "file"
+        );
+
+    parser.addOption(workspaceOption);
+    parser.process(a);
+
     MainWindow w;
+
+    // load Workspace
+    const QString workspaceFile = parser.value(workspaceOption);
+
+    if (!workspaceFile.isEmpty())
+    {
+        QFileInfo fileInfo(workspaceFile);
+
+        if (fileInfo.exists() && fileInfo.isFile())
+        {
+            w.loadWorkspaceFromFile(fileInfo.absoluteFilePath());
+        }
+        else
+        {
+            qWarning() << "Workspace file not found:" << workspaceFile;
+        }
+    }
+
     if(w.isMaximizedWindow())
     {
         w.showMaximized();
