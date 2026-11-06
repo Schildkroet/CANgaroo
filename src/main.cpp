@@ -22,13 +22,15 @@
 #include <algorithm>
 
 #include <QApplication>
+#include <QCommandLineParser>
 #include <QCoreApplication>
 #include <QDir>
+#include <QFileInfo>
 #include <QLibraryInfo>
 #include <QStyleFactory>
 #include <QTranslator>
 
-#include <QCommandLineParser>
+#include <core/Log.h>
 
 #if defined(__linux__)
 // Returns true if a Qt plugin whose file name contains `needle` exists in the
@@ -89,38 +91,38 @@ int main(int argc, char *argv[])
     QCoreApplication::setOrganizationDomain("CANgaroo/Schildkroet");
     QCoreApplication::setApplicationName("CANgaroo");
 
-    // Kommandozeilen-Parser
+    QCoreApplication::setApplicationVersion(QStringLiteral(VERSION_STRING));
+
     QCommandLineParser parser;
     parser.setApplicationDescription("CANgaroo CAN Bus Analyzer");
     parser.addHelpOption();
     parser.addVersionOption();
+    parser.addPositionalArgument("workspace", "Workspace file to load.", "[workspace]");
 
-    // Workspace-Option
-    QCommandLineOption workspaceOption(
-        QStringList() << "w" << "workspace",
-        "Load workspace from file.",
-        "file"
-        );
-
+    const QCommandLineOption workspaceOption(
+        {"w", "workspace"}, "Load workspace from <file>.", "file");
     parser.addOption(workspaceOption);
     parser.process(a);
 
     MainWindow w;
 
-    // load Workspace
-    const QString workspaceFile = parser.value(workspaceOption);
+    // -w takes precedence over a positional argument (e.g. "Open with")
+    QString workspaceFile = parser.value(workspaceOption);
+    if (workspaceFile.isEmpty() && !parser.positionalArguments().isEmpty())
+    {
+        workspaceFile = parser.positionalArguments().constFirst();
+    }
 
     if (!workspaceFile.isEmpty())
     {
-        QFileInfo fileInfo(workspaceFile);
-
-        if (fileInfo.exists() && fileInfo.isFile())
+        const QFileInfo fileInfo(workspaceFile);
+        if (fileInfo.isFile())
         {
             w.loadWorkspaceFromFile(fileInfo.absoluteFilePath());
         }
         else
         {
-            qWarning() << "Workspace file not found:" << workspaceFile;
+            log_error(QObject::tr("Workspace file not found: %1").arg(workspaceFile));
         }
     }
 

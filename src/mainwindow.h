@@ -157,7 +157,6 @@ private:
     void clearWorkspace();
     bool loadWorkspaceTab(QDomElement el);
     bool loadWorkspaceSetup(QDomElement el);
-
     bool saveWorkspaceToFile(const QString &filename);
 
     void newWorkspace();

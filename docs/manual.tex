@@ -280,7 +280,7 @@ Views can be:
 \subsection{Workspace Files}
 
 The complete layout, all view configurations, database paths, filter states, and
-TX generator messages are saved as an XML workspace file (\file{.xml}).
+TX generator messages are saved as an XML workspace file (\file{.cangaroo}).
 
 \begin{table}[h]
   \centering
@@ -298,6 +298,19 @@ TX generator messages are saved as an XML workspace file (\file{.xml}).
 
 The \menu{File} menu also keeps a list of the eight most recently opened workspaces for
 quick access.
+
+A workspace can also be opened at start-up from the command line, either with the
+\texttt{-w} / \texttt{-{}-workspace} option or as a plain argument (which is what a file
+manager's ``Open with'' passes):
+
+\begin{verbatim}
+cangaroo -w my_setup.cangaroo
+cangaroo my_setup.cangaroo
+\end{verbatim}
+
+If both are given, \texttt{-w} takes precedence. A file that does not exist is reported in
+the Log view and CANgaroo starts with an empty workspace. \texttt{-{}-version} and
+\texttt{-{}-help} print the version and the available options.
 
 % ══════════════════════════════════════════════════════════════════════════════
 \section{Interface Setup}
