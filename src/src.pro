@@ -51,7 +51,13 @@ include($$PWD/helpers/helpers.pri)
 
 PKGCONFIG += python3-embed
 unix:INCLUDEPATH += /usr/include/pybind11
-win32:INCLUDEPATH += $$system(python3 -c "import pybind11; print(pybind11.get_include())")
+win32 {
+    # Escaped quotes: qmake strips plain ones, and the shell then splits the
+    # Python snippet at its spaces ("import" alone, a SyntaxError).
+    PYBIND11_INCLUDE = $$system("python3 -c \"import pybind11; print(pybind11.get_include())\"")
+    isEmpty(PYBIND11_INCLUDE): warning("pybind11 include directory not found (python3 -c 'import pybind11')")
+    INCLUDEPATH += $$PYBIND11_INCLUDE
+}
 
 unix:PKGCONFIG += libnl-3.0
 unix:PKGCONFIG += libnl-route-3.0
