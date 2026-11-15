@@ -34,10 +34,10 @@
 // Timing model. The firmware's USB ISR (slCanProccesInput) assembles a line and
 // copies it into one static command[] buffer; the main loop (slCanCheckCommand)
 // answers it later. A second line that completes before that overwrites the
-// first, which is then never answered. Here the "main loop" runs only when the
-// host looks for data (bytesAvailable / waitForReadyRead / readAll), never on
-// write or waitForBytesWritten. So a host that writes a command before reading
-// the previous reply loses it, and lostCommands() shows it.
+// first, which is then never answered. Here the main loop runs only inside the
+// port's waitForReadyRead() (see tests/support/FakeSerialPort.h), so a host that
+// writes a command before waiting for the previous reply loses it, and
+// lostCommands() shows it.
 
 #include <cstdint>
 #include <optional>
@@ -47,9 +47,9 @@
 #include <QMap>
 #include <QString>
 
-#include "driver/SerialTransport/SerialTransport.h"
+#include "support/FakeSerialPort.h"
 
-class FakeUlcDevice
+class FakeUlcDevice final : public FakeSerialDevice
 {
 public:
     static constexpr int k_maxRows = 16;  // MAX_SLAVES_COUNT
@@ -79,21 +79,14 @@ public:
 
     FakeUlcDevice();
 
-    // Each call makes a transport for one UlcInterface::open(), all sharing
-    // this device. The device must outlive the interface.
-    [[nodiscard]] SerialTransportFactory factory();
-
     // ── Test controls ────────────────────────────────────────────────────────
     void setFirmwareVersion(uint8_t major, uint8_t minor);
     void setHardwareVersion(uint8_t minor);
-    void setPortOpenFails(bool fails) { _portOpenFails = fails; }
     // The main loop stops: commands pile up in command[] and are never answered,
     // e.g. a generic ST virtual COM port that is not a uLC.
     void setStalled(bool stalled) { _stalled = stalled; }
     // The next n commands are executed but their reply is lost.
     void dropReplies(int n) { _dropReplies = n; }
-    // USB unplugged: the port stays open but reports an error.
-    void unplug() { _unplugged = true; }
 
     // Frame a slave answers on the bus when the monitor sends a header for `id`.
     void setSlaveResponse(uint8_t id, const QByteArray &data);
@@ -119,14 +112,11 @@ public:
     // Lines that reached command[] so far (executed, lost or still pending)
     [[nodiscard]] int linesReceived() const { return _linesReceived; }
 
+protected:
+    void hostWrite(const QByteArray &data) override;
+    void runMainLoop() override;
+
 private:
-    friend class FakeUlcTransport;
-
-    // Host side, called by FakeUlcTransport
-    void hostWrite(const QByteArray &data);
-    void runMainLoop();
-    QByteArray &output() { return _output; }
-
     void processInput(char ch);        // slCanProccesInput
     void checkCommand(QByteArray line); // slCanCheckCommand
     bool addMasterRow(const QByteArray &line);    // addLinMasterRow
@@ -147,15 +137,12 @@ private:
 
     QByteArray _line;
     std::optional<QByteArray> _command;
-    QByteArray _output;
     // Frames that arrive on the bus after the current reply (one-shot echo)
     QList<QByteArray> _deferredFrames;
     std::optional<QByteArray> _chatter;
     QMap<uint8_t, QByteArray> _slaveResponses;
 
-    bool _portOpenFails{false};
     bool _stalled{false};
-    bool _unplugged{false};
     int _dropReplies{0};
 
     QList<QByteArray> _executed;

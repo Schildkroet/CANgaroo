@@ -41,9 +41,6 @@
 
 #pragma once
 
-#include "../BusInterface.h"
-#include "core/MeasurementInterface.h"
-
 #include <atomic>
 #include <memory>
 
@@ -51,7 +48,10 @@
 #include <QList>
 #include <QMutex>
 #include <QString>
-#include <QtSerialPort/QSerialPort>
+
+#include "core/MeasurementInterface.h"
+#include "driver/BusInterface.h"
+#include "driver/SerialTransport/SerialTransport.h"
 
 class SLCANDriver;
 
@@ -66,7 +66,10 @@ public:
         WeActStudio,
     };
 
-    SLCANInterface(SLCANDriver *driver, int index, QString name, bool fdSupport, Manufacturer manufacturer);
+    // `transportFactory` makes the port each open() talks to: a real serial
+    // port from SLCANDriver, a simulated device in tests.
+    SLCANInterface(SLCANDriver *driver, int index, QString name, bool fdSupport, Manufacturer manufacturer,
+                   SerialTransportFactory transportFactory);
     ~SLCANInterface() override;
 
     QString getName() const override;
@@ -111,6 +114,8 @@ private:
     void drainTxQueue(QList<BusMessage> &msglist);
     void handleTxConfirm(QList<BusMessage> &msglist, bool success);
     bool parseRxLine(QList<BusMessage> &msglist);
+    // Marks the interface offline if the serial port failed or was unplugged.
+    bool checkPortLost();
     [[nodiscard]] static QByteArray encodeFrame(const BusMessage &msg);
 
     Manufacturer _manufacturer;
@@ -120,7 +125,8 @@ private:
     bool _fdSupport{false};
     MeasurementInterface _settings;
 
-    std::unique_ptr<QSerialPort> _port;
+    SerialTransportFactory _transportFactory;
+    std::unique_ptr<SerialTransport> _port;
     QByteArray _rxLineBuffer;
 
     // Frames awaiting device ACK — only accessed from BusListener thread

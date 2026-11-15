@@ -42,6 +42,7 @@
 #include "SLCANInterface.h"
 #include "core/Backend.h"
 #include "driver/GenericCanSetupPage.h"
+#include "driver/SerialTransport/QtSerialTransport.h"
 
 #include <iostream>
 
@@ -109,7 +110,8 @@ SLCANInterface *SLCANDriver::createOrUpdateInterface(int index, QString name, bo
         }
     }
 
-    auto *scif = new SLCANInterface(this, index, std::move(name), fdSupport, manufacturer);
+    auto *scif = new SLCANInterface(this, index, std::move(name), fdSupport, manufacturer,
+                                   QtSerialTransport::factory());
     addInterface(scif);
     return scif;
 }

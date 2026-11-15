@@ -36,7 +36,7 @@
 #include "driver/UlcDriver/UlcInterface.h"
 
 #include "FakeUlcDevice.h"
-#include "LogCapture.h"
+#include "support/LogCapture.h"
 
 namespace
 {

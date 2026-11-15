@@ -1,4 +1,4 @@
-// Link stubs for MeasurementInterface, which reaches into Backend only for its
+// Link stubs for core/MeasurementInterface.cpp, which reaches into Backend only for its
 // XML load/save. Linking the real Backend would pull in every driver and the
 // Python engine; the tests never load or save a setup.
 

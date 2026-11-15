@@ -19,4 +19,5 @@ SUBDIRS += \
     slcan_codec \
     ulc_codec \
     ulc_driver \
+    slcan_driver \
     measurement_setup

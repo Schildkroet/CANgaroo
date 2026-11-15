@@ -21,8 +21,6 @@
 
 #include "FakeUlcDevice.h"
 
-#include <thread>
-
 namespace
 {
 
@@ -66,82 +64,9 @@ void appendHex(QByteArray &out, uint8_t v)
 } // namespace
 
 
-// ── Transport ────────────────────────────────────────────────────────────────
-
-class FakeUlcTransport final : public SerialTransport
-{
-public:
-    explicit FakeUlcTransport(FakeUlcDevice &device) : _dev(device) {}
-
-    bool open(const QString &, const Settings &) override
-    {
-        _open = !_dev._portOpenFails;
-        return _open;
-    }
-    void close() override { _open = false; }
-    bool isOpen() const override { return _open; }
-    bool hasFailed() const override { return _dev._unplugged; }
-    QString errorString() const override
-    {
-        if (_dev._unplugged)
-            return QStringLiteral("device unplugged");
-        return _dev._portOpenFails ? QStringLiteral("cannot open port") : QString();
-    }
-
-    // QSerialPort::clear(): drops what the host has not read yet
-    void clear() override { _dev.output().clear(); }
-
-    qint64 write(const QByteArray &data) override
-    {
-        if (!_open || _dev._unplugged)
-            return -1;
-        _dev.hostWrite(data);
-        return data.size();
-    }
-    // The bytes are with the device already; the main loop does not run here.
-    bool waitForBytesWritten(std::chrono::milliseconds) override { return _open && !_dev._unplugged; }
-
-    qint64 bytesAvailable() override
-    {
-        if (!_open || _dev._unplugged)
-            return 0;
-        _dev.runMainLoop();
-        return _dev.output().size();
-    }
-
-    bool waitForReadyRead(std::chrono::milliseconds timeout) override
-    {
-        if (bytesAvailable() > 0)
-            return true;
-        // Block like a real port, so timeouts in the driver behave as on hardware.
-        std::this_thread::sleep_for(timeout);
-        return bytesAvailable() > 0;
-    }
-
-    QByteArray readAll() override
-    {
-        if (!_open || _dev._unplugged)
-            return {};
-        _dev.runMainLoop();
-        QByteArray out;
-        out.swap(_dev.output());
-        return out;
-    }
-
-private:
-    FakeUlcDevice &_dev;
-    bool _open{false};
-};
-
-
 // ── Device ───────────────────────────────────────────────────────────────────
 
 FakeUlcDevice::FakeUlcDevice() = default;
-
-SerialTransportFactory FakeUlcDevice::factory()
-{
-    return [this] { return std::make_unique<FakeUlcTransport>(*this); };
-}
 
 void FakeUlcDevice::setFirmwareVersion(uint8_t major, uint8_t minor)
 {
