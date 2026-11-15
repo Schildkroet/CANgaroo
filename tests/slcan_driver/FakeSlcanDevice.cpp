@@ -81,7 +81,7 @@ bool toDigits(const QByteArray &line, bool strict, QByteArray &digits)
     return true;
 }
 
-// Digit at `i`; past the end the firmware reads a stale buffer, taken as 0 here.
+// Digit at `i`; 0 past the buffer
 uint8_t digit(const QByteArray &digits, int i)
 {
     return i < digits.size() ? static_cast<uint8_t>(digits.at(i)) : 0;
@@ -97,7 +97,12 @@ void appendHex(QByteArray &out, uint32_t value, int digits)
 } // namespace
 
 
-FakeSlcanDevice::FakeSlcanDevice(Firmware fw) : _fw(fw) {}
+FakeSlcanDevice::FakeSlcanDevice(Firmware fw)
+    : _fw(fw)
+    // SLCAN_MTU: canable-fw 30, canable2-fw 138 + 1 + 16
+    , _slcanStr(fw == Firmware::CANable1 ? 30 : 155, '\0')
+{
+}
 
 uint32_t FakeSlcanDevice::nominalBitrate() const
 {
@@ -135,6 +140,7 @@ void FakeSlcanDevice::receiveBusFrame(const Frame &frame)
     // bxCAN (CANable 1) cannot receive FD frames; the bus sees error frames.
     if (frame.fd && _fw == Firmware::CANable1)
         return;
+
     _output += (_enhanced ? rxEnhanced(frame) : rxLine(frame));
 }
 
@@ -157,58 +163,86 @@ void FakeSlcanDevice::runMainLoop()
     if (_chatter && _onBus)
         receiveBusFrame(*_chatter);
 
-    // cdc_process / usbrxTask: CR ends a command
     for (char ch : std::as_const(_input))
     {
-        if (ch == k_cr)
-        {
-            parseLine(_line);
-            _line.clear();
-        }
+        if (_fw == Firmware::WeAct)
+            weactInput(ch);
         else
-        {
-            _line.append(ch);
-        }
+            canableInput(ch);
     }
     _input.clear();
 
     transmitQueued();
 }
 
-void FakeSlcanDevice::parseLine(QByteArray line)
+// cdc_process: CR runs slcan_parse_str on slcan_str, which is not cleared. A
+// shorter line leaves the tail of the previous one behind, and an empty line
+// runs slcan_str[0] again. The result is not reported (the CR/BEL lines are
+// commented out).
+void FakeSlcanDevice::canableInput(char ch)
 {
-    if (line.isEmpty())
-        return;
-    _commands.append(line);
-
-    if (_fw == Firmware::WeAct)
+    if (ch == k_cr)
     {
-        // usbrxTask: SLCAN_OK -> CR, SLCAN_ERROR -> BEL, OK_NOT_RESPONSE -> nothing
-        const int rc = parseWeAct(line);
-        if (rc == k_error)
-        {
-            _rejected.append(line);
-            _output += k_bell;
-        }
-        else if (rc == k_ok)
-        {
-            _output += k_cr;
-        }
+        const QByteArray raw = _slcanStr.left(_strIndex);
+        _commands.append(raw);
+        if (parseCanable(_strIndex) == k_error)
+            _rejected.append(raw);
+        _strIndex = 0;
+        return;
+    }
+    if (_strIndex >= _slcanStr.size())
+        _strIndex = 0;  // overflow: start over
+    _slcanStr[_strIndex++] = ch;
+}
+
+// usbrxTask, PARSE_IDLE / PARSE_SLCAN (binary mode input is not modelled; the
+// driver only sends ASCII). The first byte is stored whatever it is, so a lone
+// CR becomes the start of the next command. SLCAN_OK -> CR, SLCAN_ERROR -> BEL,
+// OK_NOT_RESPONSE -> nothing.
+void FakeSlcanDevice::weactInput(char ch)
+{
+    constexpr int k_mtu = 1 + 8 + 1 + 128 + 1;  // SLCAN_MTU
+
+    if (_weactData.isEmpty())
+    {
+        _weactData.append(ch);
+        return;
+    }
+    if (ch != k_cr)
+    {
+        if (_weactData.size() >= k_mtu)
+            _weactData.clear();  // state = PARSE_IDLE
+        else
+            _weactData.append(ch);
         return;
     }
 
-    // cdc_process: the result is not reported (the CR/BEL lines are commented out)
-    if (parseCanable(line) == k_error)
+    const QByteArray line = _weactData;
+    _weactData.clear();
+    _commands.append(line);
+    const int rc = parseWeAct(line);
+    if (rc == k_error)
+    {
         _rejected.append(line);
+        _output += k_bell;
+    }
+    else if (rc == k_ok)
+    {
+        _output += k_cr;
+    }
 }
 
-int FakeSlcanDevice::parseCanable(const QByteArray &line)
+int FakeSlcanDevice::parseCanable(int len)
 {
     const bool canable2 = _fw == Firmware::CANable2;
-    QByteArray digits;
-    toDigits(line, false, digits);
+    // In place, as the firmware does: only the new line's bytes are converted,
+    // the rest of slcan_str keeps what earlier lines left there.
+    QByteArray &digits = _slcanStr;
+    QByteArray converted;
+    toDigits(digits.left(len), false, converted);
+    digits.replace(0, len, converted);
 
-    switch (line.at(0))
+    switch (digits.at(0))
     {
     case 'O':
         if (!_onBus)
@@ -243,29 +277,30 @@ int FakeSlcanDevice::parseCanable(const QByteArray &line)
         [[fallthrough]];
     case 'M':
     case 'A':
-        if (line.at(0) == 'M' || line.at(0) == 'm')
+        if (digits.at(0) == 'M' || digits.at(0) == 'm')
         {
             if (!_onBus)
                 _silentRequested = digit(digits, 1) == 1;  // can_set_silent(), overridden by can_enable()
         }
         return k_ok;
     case 'V':
-        _output += canable2 ? QByteArrayLiteral("b158aa7 https://github.com/normaldotcom/canable2-fw.git\r")
-                            : QByteArrayLiteral("9fddea4 https://github.com/normaldotcom/canable-fw.git\r");
+        // GIT_VERSION " " GIT_REMOTE, the remote cut to "github..." by the Makefile
+        _output += canable2 ? QByteArrayLiteral("b158aa7 github.com/normaldotcom/canable2-fw.git\r")
+                            : QByteArrayLiteral("9fddea4 github.com/normaldotcom/canable-fw.git\r");
         return k_ok;
     case 'E':
-        _output += QByteArrayLiteral("CANable Error Register: 0");
+        _output += "CANable Error Register: " + QByteArray::number(_errorReg, 16).toUpper();
         return k_ok;
     case 't':
     case 'T':
     case 'r':
     case 'R':
-        return parseFrameCommand(line, digits);
+        return parseFrameCommand(digits.at(0), digits, len);
     case 'd':
     case 'D':
     case 'b':
     case 'B':
-        return canable2 ? parseFrameCommand(line, digits) : k_error;
+        return canable2 ? parseFrameCommand(digits.at(0), digits, len) : k_error;
     default:
         return k_error;
     }
@@ -370,7 +405,7 @@ int FakeSlcanDevice::parseWeAct(const QByteArray &line)
     case 'E':
         if (len != 1)
             return k_error;
-        _output += QByteArrayLiteral("CANable Error Register: 0");
+        _output += "CANable Error Register: " + QByteArray::number(_errorReg, 16).toUpper();
         return k_okNoResponse;
     case 'X':
         return (len == 1 && !_onBus) ? k_ok : k_error;
@@ -384,16 +419,15 @@ int FakeSlcanDevice::parseWeAct(const QByteArray &line)
     case 'B':
         if (!_onBus)
             return k_error;
-        return parseFrameCommand(line, digits);
+        return parseFrameCommand(line.at(0), digits, len);
     default:
         return k_error;
     }
 }
 
 // Frame part of slcan_parse_str, both dialects
-int FakeSlcanDevice::parseFrameCommand(const QByteArray &line, const QByteArray &digits)
+int FakeSlcanDevice::parseFrameCommand(char type, const QByteArray &digits, int len)
 {
-    const char type = line.at(0);
     Frame frame;
     frame.extended = type >= 'A' && type <= 'Z';
     const char lower = static_cast<char>(frame.extended ? type + 32 : type);
@@ -415,7 +449,7 @@ int FakeSlcanDevice::parseFrameCommand(const QByteArray &line, const QByteArray 
     {
         // "Check if len != command + id + length + bytes_in_msg"
         const int expected = 1 + idLen + 1 + (frame.rtr ? 0 : bytes * 2);
-        if (line.size() != expected)
+        if (len != expected)
             return k_error;
     }
 
@@ -435,7 +469,15 @@ void FakeSlcanDevice::transmitQueued()
     for (const Frame &frame : std::as_const(_txQueue))
     {
         if (!_onBus)
-            continue;  // dropped: the controller is stopped
+        {
+            // can_process: HAL_FDCAN_AddMessageToTxFifoQ fails on a stopped
+            // controller, the frame is dropped and ERR_CAN_TXFAIL (bit 2) set.
+            // Seen on a CANable 2.0 (error register 4). CANable 1's bxCAN HAL
+            // may accept the frame instead; not checked, so only dropped there.
+            if (_fw == Firmware::CANable2)
+                _errorReg |= 1u << 2;
+            continue;
+        }
 
         if (_fw != Firmware::WeAct)
         {
@@ -474,8 +516,8 @@ QByteArray FakeSlcanDevice::rxLine(const Frame &frame) const
     const int bytes = k_dlcToBytes.at(frame.dlc);
     if (frame.rtr)
     {
-        // CANable copies the (unwritten) data area of a remote frame too;
-        // WeAct leaves it out since V1.0.0.6.
+        // CANable copies the (unwritten) data area of a remote frame too, with
+        // undefined content; WeAct leaves it out since V1.0.0.6.
         if (_fw != Firmware::WeAct)
             for (int i = 0; i < bytes; ++i)
                 appendHex(line, 0, 2);

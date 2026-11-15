@@ -41,7 +41,15 @@
 //     effect: the channel is never silent.
 //   - "S7" is 750 kbit/s on CANable (CAN_BITRATE_750K), 800 kbit/s on WeAct.
 //     CANable 1 has no "S9" (83.3k); CANable 2's 750k prescaler gives 1.43 Mbit/s.
-//   - CANable reports data bytes for remote frames, WeAct does not.
+//   - CANable reports data bytes for remote frames, WeAct does not. Their
+//     content is undefined (on a CANable 2.0: stale RX FIFO element bytes that
+//     vary between runs); the fake reports zeros.
+//   - CANable keeps its command buffer between lines: an empty line runs the
+//     previous command again ("FIXME: Pressing enter repeats the previous TX").
+//     On WeAct an empty line instead spoils the next command (BEL).
+//
+// Checked against a real CANable 2.0 (STM32G431) running canable2-fw b158aa7
+// with tests/hw_compare; see the README there.
 
 #include <cstdint>
 #include <optional>
@@ -84,6 +92,9 @@ public:
     void failNextTransmissions(int n) { _failNext = n; }
     // State an earlier session left behind: channel open, `frame` seen on the
     // bus on every main loop pass; WeAct optionally in binary (enhanced) mode.
+    // Traffic then always lands in the same pass as the next command, the
+    // worst case of a race: on a CANable 2.0 at full bus load a frame slipped
+    // in between clear() and "C" in 26 of 100 opens.
     void leaveRunning(const Frame &frame, bool enhancedMode = false);
 
     // ── Inspection ───────────────────────────────────────────────────────────
@@ -97,6 +108,8 @@ public:
     // Mode the controller runs in now (bus monitoring); only meaningful on bus
     [[nodiscard]] bool silent() const { return _onBus && _silentActive; }
     [[nodiscard]] bool enhancedMode() const { return _enhanced; }
+    // error.c err_reg: sticky bit per error_t, cleared only by a reset
+    [[nodiscard]] uint32_t errorRegister() const { return _errorReg; }
     [[nodiscard]] const QList<Frame> &transmitted() const { return _transmitted; }
     // Command lines in the order the firmware parsed them, without CR
     [[nodiscard]] const QList<QByteArray> &commands() const { return _commands; }
@@ -108,11 +121,13 @@ protected:
     void runMainLoop() override;
 
 private:
-    void parseLine(QByteArray line);
-    int parseCanable(const QByteArray &line);
+    void canableInput(char ch);  // cdc_process
+    void weactInput(char ch);    // usbrxTask
+    int parseCanable(int len);
     int parseWeAct(const QByteArray &line);
-    // Frame command of either dialect; -1 on a malformed line
-    int parseFrameCommand(const QByteArray &line, const QByteArray &digits);
+    // Frame command of either dialect; -1 on a malformed line. `digits` holds
+    // the converted command, `len` its length.
+    int parseFrameCommand(char type, const QByteArray &digits, int len);
     void transmitQueued();
     [[nodiscard]] QByteArray rxLine(const Frame &frame) const;
     [[nodiscard]] QByteArray rxEnhanced(const Frame &frame) const;
@@ -128,11 +143,15 @@ private:
     bool _silentActive{false};
     bool _enhanced{false};
 
-    QByteArray _input;  // host bytes not yet handled by the main loop
-    QByteArray _line;   // command being assembled
+    QByteArray _input;      // host bytes not yet handled by the main loop
+    QByteArray _slcanStr;   // CANable: slcan_str[SLCAN_MTU], kept between lines
+    int _strIndex{0};       // CANable: slcan_str_index
+    QByteArray _weactData;  // WeAct: usbrxTask data[], empty = PARSE_IDLE
     QList<Frame> _txQueue;
     std::optional<Frame> _chatter;
     int _failNext{0};
+    uint32_t _errorReg{0};
+
 
     QList<Frame> _transmitted;
     QList<QByteArray> _commands;
