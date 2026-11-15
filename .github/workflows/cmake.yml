@@ -412,13 +412,14 @@ jobs:
           msystem: UCRT64
           update: true
           cache: true
+          # pkgconf: qmake's PKGCONFIG (python3-embed) needs it; it used to come
+          # in only as a dependency of another package. No comments inside the
+          # folded list below: they would become package names.
           install: >-
             mingw-w64-ucrt-x86_64-toolchain
             mingw-w64-ucrt-x86_64-qt6
             mingw-w64-ucrt-x86_64-qt6-tools
             mingw-w64-ucrt-x86_64-make
-            # qmake's PKGCONFIG (python3-embed) needs it; it used to come in
-            # only as a dependency of another package
             mingw-w64-ucrt-x86_64-pkgconf
             mingw-w64-ucrt-x86_64-ntldd
             mingw-w64-ucrt-x86_64-python
