@@ -28,7 +28,10 @@
 
 #include <atomic>
 #include <cstdint>
+#include <memory>
+#include <string>
 #include <thread>
+#include <vector>
 
 struct CandleQueuedFrame
 {
@@ -86,6 +89,8 @@ struct CandleSharedDevice
     // routes each received frame to the appropriate channel queue.
     std::thread readerThread;
     std::atomic<bool> readerRunning{false};
+    // Set by the reader once transfers keep failing (device unplugged)
+    std::atomic<bool> lost{false};
 
     ~CandleSharedDevice();
 
@@ -97,3 +102,16 @@ struct CandleSharedDevice
     // Block until a frame for channel arrives or timeout_ms elapses.
     bool readFrame(uint8_t channel, CandleQueuedFrame &queuedFrame, unsigned timeout_ms);
 };
+
+// A gs_usb device found by candle_list_scan(). Composite devices list one path
+// per USB interface; they are merged by baseKey into one device.
+struct CandleDiscovered
+{
+    std::shared_ptr<CandleSharedDevice> device;
+    uint8_t channels{0};
+    std::wstring baseKey;
+};
+
+// Scans for gs_usb devices, opening each briefly to read its channel count and
+// per-channel capabilities (so they are known before open()).
+std::vector<CandleDiscovered> candleDiscoverDevices();

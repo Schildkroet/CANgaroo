@@ -9,6 +9,12 @@ B=../../build/tests/slcan_hw_compare
 $B probe /dev/ttyACM0 > real.txt; $B probe fake:canable2 > fake.txt; diff real.txt fake.txt
 $B driver /dev/ttyACM0 canable2; $B driver fake:canable2
 $B bus /dev/ttyACM0 can0 [elmue]  # a SocketCAN channel on the same bus, 500k / 2M FD
+
+# gs_usb (CandleAPI driver) through libusb; only the adapter with this USB
+# serial is touched, its kernel gs_usb driver gets it back afterwards
+$B candle-probe 206E38A5505650082
+$B candle-bus   206E38A5505650082 can0
+$B candle-leave 206E38A5505650082   # leave channel 0 running at 250 kbit/s
 ```
 
 `probe` sends the same command scripts to both and prints every reply byte.
@@ -64,4 +70,21 @@ With `s2,139,20,…` (87.5 %) they went through ("Perfect match: Yes" in Elmue's
 debug output). The driver now sets Elmue's timing with `s`/`y` from the
 configured bitrate and sample point (`SlcanBitTiming.h`), using the clock and
 limits from the `V` reply.
+
+## Results: gs_usb, ElmueSoft Candlelight 2.5 (CandleAPI driver)
+
+Same board with Elmue's Candlelight firmware (`Build/Make_G431_Candle_Multiboard`,
+26.10.01), against `FakeGsUsbDevice` (Elmue G431). candle.c runs on Linux here
+through `candle_usb_hw.cpp` (libusb) instead of WinUSB.
+
+| Checked | Result |
+|---|---|
+| 28 control requests (config, bt_const, bt_const_ext, state, refused requests, START without / with bad / with valid timing, timing and START while running) | identical, byte for byte apart from HAL version and timestamp values |
+| `CandleApiInterface` RX and TX of all frame types on the wire (`candle-bus`) | identical, incl. 64-byte BRS frames, every TX shown once |
+| Channel left running at 250k, then opened at 500k | fixed driver: reconfigured, 0 differences. Without the fix (no RESET before the bit timing): stays at 250k, 16 differences |
+
+The legacy gs_usb echo comes when a frame is queued, not when it was ACKed:
+with the device at the wrong bitrate, frames were shown as sent that never
+reached the bus. That is the firmware's protocol (Elmue's comment calls the echo
+"useless"), not something the driver can see.
 

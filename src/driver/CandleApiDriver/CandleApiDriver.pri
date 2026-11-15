@@ -6,6 +6,7 @@ SOURCES += \
     $$PWD/CandleSharedDevice.cpp \
     $$PWD/api/candle.c \
     $$PWD/api/candle_ctrl_req.c \
+    $$PWD/api/candle_usb_winusb.c \
     $$PWD/CandleApiTiming.cpp
 
 #win32:LIBS += -L$$PWD/api/ -lcandle_api
@@ -20,6 +21,7 @@ HEADERS += \
     $$PWD/CandleSharedDevice.h \
     $$PWD/api/candle_ctrl_req.h \
     $$PWD/api/candle_defs.h \
+    $$PWD/api/candle_usb.h \
     $$PWD/api/ch_9.h \
     $$PWD/CandleApiTiming.h
 

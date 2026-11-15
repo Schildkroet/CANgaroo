@@ -27,24 +27,27 @@
 #include <QList>
 #include <QMutex>
 
-#include <windows.h>
-
 #include <atomic>
+#include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 
 #include "CandleApiTiming.h"
 #include "api/candle.h"
 
-class CandleApiDriver;
+class CanDriver;
 
 class CandleApiInterface : public BusInterface
 {
     Q_OBJECT
 public:
-    CandleApiInterface(CandleApiDriver *driver,
+    // `hostClockUs`: microseconds on the host clock (Backend's measurement
+    // clock in the application), used to anchor device timestamps on open().
+    CandleApiInterface(CanDriver *driver,
                        std::shared_ptr<CandleSharedDevice> sharedDev,
-                       uint8_t channel);
+                       uint8_t channel,
+                       std::function<uint64_t()> hostClockUs);
     ~CandleApiInterface() override;
 
     QString getName() const override;
@@ -87,7 +90,7 @@ private:
 
     std::shared_ptr<CandleSharedDevice> _sharedDev;
     MeasurementInterface _settings;
-    Backend &_backend;
+    std::function<uint64_t()> _hostClockUs;
 
     uint64_t _numRx;
     uint64_t _numTx;

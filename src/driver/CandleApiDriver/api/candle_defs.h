@@ -1,7 +1,6 @@
 /*
 
   Copyright (c) 2016 Hubert Denkmair <hubert@denkmair.de>
-  Copyright (c) 2026 Schildkroet
 
   This file is part of the candle windows API.
 
@@ -22,27 +21,15 @@
 
 #pragma once
 
+// gs_usb protocol state of a device. Platform-free: the USB handles live
+// behind candle_usb_t (candle_usb.h).
+
 #include <stdint.h>
 
-#ifndef _WIN32_WINNT
-#define _WIN32_WINNT 0x0600
-#endif
-
-#include <windows.h>
-#include <winbase.h>
-#include <winusb.h>
-#include <setupapi.h>
-#include <devguid.h>
-#include <regstr.h>
-
-#undef __CRT__NO_INLINE
-#include <strsafe.h>
-#define __CRT__NO_INLINE
-
 #include "candle.h"
+#include "candle_usb.h"
 
 #define CANDLE_MAX_DEVICES 32
-#define CANDLE_URB_COUNT 30
 
 #pragma pack(push,1)
 
@@ -66,31 +53,18 @@ typedef struct {
 
 #pragma pack(pop)
 
-
 typedef struct {
-    OVERLAPPED ovl;
-    bool pending;
-    uint8_t buf[512];
-} canlde_rx_urb;
-
-typedef struct {
-    wchar_t path[256];
+    wchar_t path[CANDLE_USB_PATH_LEN];
     candle_devstate_t state;
     candle_err_t last_error;
 
-    HANDLE deviceHandle;
-    WINUSB_INTERFACE_HANDLE winUSBHandle;
-    UCHAR interfaceNumber;
-    UCHAR bulkInPipe;
-    UCHAR bulkOutPipe;
-    HANDLE txEvent;     /* pre-allocated event for timed overlapped writes */
+    candle_usb_t *usb;  // NULL while closed
+    uint8_t interfaceNumber;
 
     candle_device_config_t dconf;
     candle_capability_t bt_const;
     /* Per-channel capabilities: index 0..dconf.icount, maximum 8 channels */
     candle_capability_t ch_caps[8];
-    canlde_rx_urb rxurbs[CANDLE_URB_COUNT];
-    HANDLE rxevents[CANDLE_URB_COUNT];
 } candle_device_t;
 
 typedef struct {
@@ -98,4 +72,3 @@ typedef struct {
     candle_err_t last_error;
     candle_device_t dev[CANDLE_MAX_DEVICES];
 } candle_list_t;
-

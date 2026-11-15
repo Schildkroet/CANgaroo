@@ -20,4 +20,5 @@ SUBDIRS += \
     ulc_codec \
     ulc_driver \
     slcan_driver \
+    candle_driver \
     measurement_setup

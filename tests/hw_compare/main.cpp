@@ -24,6 +24,8 @@
 //   slcan_hw_compare probe  <port> | fake:<canable1|canable2|weact|elmue>
 //   slcan_hw_compare driver <port> | fake:<...>  [canable1|canable2|weact|elmue]
 //   slcan_hw_compare bus    <port> <socketcan if> [canable2|elmue]   (500k / 2M)
+//   slcan_hw_compare candle-probe <usb serial>          (gs_usb, vs. fake Elmue G431)
+//   slcan_hw_compare candle-bus   <usb serial> <socketcan if>
 //
 // "probe" sends a fixed list of command scripts and prints every reply byte;
 // run it once against the device and once against the fake and diff the two.
@@ -45,6 +47,7 @@
 #include <unistd.h>
 
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QElapsedTimer>
 #include <QStringList>
 
@@ -53,6 +56,10 @@
 #include "driver/SLCANDriver/SLCANInterface.h"
 #include "driver/SerialTransport/QtSerialTransport.h"
 
+#include "candle_driver/FakeGsUsbDevice.h"
+#include "driver/CandleApiDriver/CandleApiInterface.h"
+#include "driver/CandleApiDriver/CandleSharedDevice.h"
+#include "driver/CandleApiDriver/api/candle_usb.h"
 #include "slcan_driver/FakeSlcanDevice.h"
 
 using namespace std::chrono_literals;
@@ -463,12 +470,271 @@ int runBus(const QString &portName, const char *ifname, FakeSlcanDevice::Firmwar
     return diffs == 0 ? 0 : 3;
 }
 
+
+// ── gs_usb (CandleAPI) ──────────────────────────────────────────────────────
+
+struct UsbProbe
+{
+    const char *name;
+    uint8_t request;
+    bool in;
+    uint16_t value;
+    QByteArray out;      // OUT data
+    uint16_t inSize;     // IN length
+    QList<int> masked;   // byte offsets that differ per board / per call
+};
+
+QByteArray words(std::initializer_list<uint32_t> w)
+{
+    QByteArray out;
+    for (uint32_t v : w)
+        for (int i = 0; i < 4; ++i)
+            out.append(static_cast<char>((v >> (8 * i)) & 0xFF));
+    return out;
+}
+
+// Requests cangaroo sends, ones the firmware should refuse, and the START
+// rules (no timing / timing / while running).
+const QList<UsbProbe> &usbProbes()
+{
+    static const QList<UsbProbe> list = {
+        {"reset ch0", 2, false, 0, words({0, 0}), 0, {}},
+        {"device config", 5, true, 1, {}, 12, {0, 1, 2}},  // HAL version bytes
+        {"bt_const", 4, true, 0, {}, 40, {}},
+        {"bt_const_ext", 11, true, 0, {}, 72, {}},
+        {"timestamp ch0", 6, true, 0, {}, 4, {0, 1, 2, 3}},
+        {"timestamp wValue 1", 6, true, 1, {}, 4, {0, 1, 2, 3}},
+        {"state ch0 closed", 14, true, 0, {}, 12, {}},
+        {"state ch1 (none)", 14, true, 1, {}, 12, {}},
+        {"get termination", 13, true, 0, {}, 4, {}},
+        {"berr", 3, false, 0, words({1}), 0, {}},
+        {"get user id", 8, true, 0, {}, 4, {}},
+        {"set tdc", 18, false, 0, words({0, 0, 0, 2}), 0, {}},
+        {"bus off recovery", 32, false, 0, words({0}), 0, {}},
+        {"host format", 0, false, 1, words({0xbeef}), 0, {}},
+        {"start, no timing", 2, false, 0, words({1, 0x10}), 0, {}},
+        {"state after", 14, true, 0, {}, 12, {}},
+        {"bittiming brp 0", 1, false, 0, words({1, 138, 20, 1, 0}), 0, {}},
+        {"start, bad timing", 2, false, 0, words({1, 0x10}), 0, {}},
+        {"state after", 14, true, 0, {}, 12, {}},
+        {"bittiming 500k", 1, false, 0, words({1, 138, 20, 1, 2}), 0, {}},
+        {"data bittiming 2M", 10, false, 0, words({1, 30, 8, 1, 2}), 0, {}},
+        {"start fd + ts", 2, false, 0, words({1, 0x110}), 0, {}},
+        {"state running", 14, true, 0, {}, 12, {}},
+        {"bittiming while on", 1, false, 0, words({1, 138, 20, 1, 4}), 0, {}},
+        {"start while on", 2, false, 0, words({1, 0x10}), 0, {}},
+        {"state", 14, true, 0, {}, 12, {}},
+        {"reset", 2, false, 0, words({0, 0}), 0, {}},
+        {"state after reset", 14, true, 0, {}, 12, {}},
+    };
+    return list;
+}
+
+int runCandleProbe(const QString &serial)
+{
+    qputenv("CANDLE_SERIAL", serial.toLatin1());
+    FakeGsUsbDevice fake(FakeGsUsbDevice::Firmware::ElmueG431, 1, L"fake-gsusb-0");
+
+    wchar_t paths[4][CANDLE_USB_PATH_LEN];
+    candle_err_t err{};
+    const int n = candle_usb_scan(paths, 4, &err);
+    std::wstring realPath;
+    for (int i = 0; i < n; ++i)
+        if (std::wcsncmp(paths[i], L"usb:", 4) == 0)
+            realPath = paths[i];
+    if (realPath.empty())
+    {
+        std::fprintf(stderr, "no gs_usb device with serial %s\n", qPrintable(serial));
+        return 1;
+    }
+
+    candle_usb_t *real = candle_usb_open(realPath.c_str(), false, &err);
+    candle_usb_t *sim = candle_usb_open(L"fake-gsusb-0", false, &err);
+    if (!real || !sim)
+    {
+        std::fprintf(stderr, "cannot open (error %d)\n", int(err));
+        return 1;
+    }
+
+    int diffs = 0;
+    for (const UsbProbe &p : usbProbes())
+    {
+        QByteArray results[2];
+        candle_usb_t *devs[2] = {real, sim};
+        for (int d = 0; d < 2; ++d)
+        {
+            QByteArray buf = p.in ? QByteArray(p.inSize, '\0') : p.out;
+            const uint8_t type = (p.in ? 0x80 : 0x00) | 0x40 | 0x01;  // vendor, interface
+            const bool ok = candle_usb_control(devs[d], p.request, type, p.value, 0,
+                                               buf.data(), static_cast<uint16_t>(buf.size()));
+            if (ok && p.in)
+                for (int m : p.masked)
+                    if (m < buf.size())
+                        buf[m] = 'x';
+            results[d] = !ok ? QByteArray("STALL") : (p.in ? "ok " + buf.toHex() : QByteArray("ok"));
+        }
+        const bool same = results[0] == results[1];
+        diffs += same ? 0 : 1;
+        std::printf("%-20s %s %s%s%s\n", p.name, same ? "same" : "DIFF", results[0].constData(),
+                    same ? "" : "  fake ", same ? "" : results[1].constData());
+    }
+    candle_usb_close(real);
+    candle_usb_close(sim);
+    std::printf("%d difference(s)\n", diffs);
+    return diffs == 0 ? 0 : 3;
+}
+
+FakeGsUsbDevice::Frame toGs(const Frame &f)
+{
+    return FakeGsUsbDevice::Frame{.id = f.id, .extended = f.extended, .rtr = f.rtr, .fd = f.fd,
+                                  .brs = f.brs, .dlc = f.dlc, .data = f.data};
+}
+
+QByteArray describeMsg(const BusMessage &m)
+{
+    Frame f;
+    f.id = m.getId();
+    f.extended = m.isExtended();
+    f.rtr = m.isRTR();
+    f.fd = m.isFD();
+    f.brs = m.isBRS();
+    int dlc = 0;
+    while (dlc < 15 && k_dlcToBytes[dlc] < m.getLength())
+        ++dlc;
+    f.dlc = static_cast<uint8_t>(m.isRTR() || !m.isFD() ? m.getLength() : dlc);
+    if (!m.isRTR())
+        f.data = QByteArray(reinterpret_cast<const char *>(m.getData()), m.getLength());
+    return (m.isRX() ? "RX " : "TX ") + describe(f);
+}
+
+// Leaves channel 0 running at 250 kbit/s, as another program would.
+int runCandleLeave(const QString &serial)
+{
+    qputenv("CANDLE_SERIAL", serial.toLatin1());
+    wchar_t paths[4][CANDLE_USB_PATH_LEN];
+    candle_err_t err{};
+    const int n = candle_usb_scan(paths, 4, &err);
+    for (int i = 0; i < n; ++i)
+    {
+        if (std::wcsncmp(paths[i], L"usb:", 4) != 0)
+            continue;
+        candle_usb_t *usb = candle_usb_open(paths[i], false, &err);
+        if (!usb)
+            return 1;
+        const uint8_t out = 0x41;
+        QByteArray reset = words({0, 0}), timing = words({1, 138, 20, 1, 4}), start = words({1, 0});
+        candle_usb_control(usb, 2, out, 0, 0, reset.data(), 8);
+        candle_usb_control(usb, 1, out, 0, 0, timing.data(), 20);  // 160 MHz / (4 * 160)
+        candle_usb_control(usb, 2, out, 0, 0, start.data(), 8);
+        QByteArray state(12, '\0');
+        candle_usb_control(usb, 14, 0xC1, 0, 0, state.data(), 12);
+        std::printf("left running at 250 kbit/s, state %s\n", state.toHex().constData());
+        candle_usb_close(usb);
+        return 0;
+    }
+    return 1;
+}
+
+int runCandleBus(const QString &serial, const char *ifname)
+{
+    qputenv("CANDLE_SERIAL", serial.toLatin1());
+    CanSocket can(ifname);
+    if (!can.ok())
+        return 1;
+    FakeGsUsbDevice fake(FakeGsUsbDevice::Firmware::ElmueG431, 1, L"fake-gsusb-0");
+
+    std::shared_ptr<CandleSharedDevice> realDev, fakeDev;
+    for (const CandleDiscovered &d : candleDiscoverDevices())
+    {
+        const std::wstring path(candle_dev_get_path(d.device->handle));
+        (path.rfind(L"usb:", 0) == 0 ? realDev : fakeDev) = d.device;
+    }
+    if (!realDev || !fakeDev)
+    {
+        std::fprintf(stderr, "device not found\n");
+        return 1;
+    }
+    const auto clock = [] {
+        return static_cast<uint64_t>(QDateTime::currentMSecsSinceEpoch()) * 1000u;
+    };
+    CandleApiInterface real(nullptr, realDev, 0, clock);
+    CandleApiInterface simCh0(nullptr, fakeDev, 0, clock);
+
+    MeasurementInterface mi;
+    mi.setBitrate(500000);
+    mi.setSamplePoint(875);
+    mi.setCanFD(true);
+    mi.setFdBitrate(2000000);
+    mi.setFdSamplePoint(800);  // the closest the driver offers to the bus's 750
+    for (CandleApiInterface *i : {&real, &simCh0})
+    {
+        i->applyConfig(mi);
+        i->open();
+    }
+    std::printf("open: real %s, fake %s\n", real.isOpen() ? "ok" : "FAILED", simCh0.isOpen() ? "ok" : "FAILED");
+    if (!real.isOpen() || !simCh0.isOpen())
+        return 1;
+    (void)can.receive(100);
+
+    const auto collect = [](CandleApiInterface &i) {
+        QList<BusMessage> all;
+        QElapsedTimer t;
+        t.start();
+        while (t.elapsed() < 200)
+            i.readMessage(all, 10);
+        return all;
+    };
+
+    int diffs = 0;
+    for (const auto &[name, frame] : frameCases())
+    {
+        can.send(frame);
+        fake.receiveBusFrame(0, toGs(frame));
+        const QList<BusMessage> r = collect(real);
+        const QList<BusMessage> f = collect(simCh0);
+        const QByteArray rs = r.isEmpty() ? QByteArray("(nothing)") : describeMsg(r.first());
+        const QByteArray fs = f.isEmpty() ? QByteArray("(nothing)") : describeMsg(f.first());
+        const bool same = rs == fs && r.size() == f.size();
+        diffs += same ? 0 : 1;
+        std::printf("RX %-14s %s %s%s%s\n", name, same ? "same" : "DIFF", rs.constData(),
+                    same ? "" : "  fake ", same ? "" : fs.constData());
+    }
+    for (const auto &[name, frame] : frameCases())
+    {
+        real.sendMessage(toMessage(frame));
+        simCh0.sendMessage(toMessage(frame));
+        const QList<BusMessage> rEcho = collect(real);
+        const QList<BusMessage> fEcho = collect(simCh0);
+        const QList<Frame> wire = can.receive(200);
+        const QByteArray w = wire.isEmpty() ? QByteArray("(nothing)") : describe(wire.first());
+        const auto onBus = fake.transmitted(0);
+        const QByteArray fw = onBus.isEmpty() ? QByteArray("(nothing)") : describe(Frame{
+            .id = onBus.last().id, .extended = onBus.last().extended, .rtr = onBus.last().rtr,
+            .fd = onBus.last().fd, .brs = onBus.last().brs, .dlc = onBus.last().dlc, .data = onBus.last().data});
+        const bool same = w == fw && rEcho.size() == fEcho.size();
+        diffs += same ? 0 : 1;
+        std::printf("TX %-14s %s wire %s, shown %lld%s%s\n", name, same ? "same" : "DIFF", w.constData(),
+                    static_cast<long long>(rEcho.size()), same ? "" : "  fake ", same ? "" : fw.constData());
+    }
+    real.close();
+    simCh0.close();
+    std::printf("%d difference(s)\n", diffs);
+    return diffs == 0 ? 0 : 3;
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
 {
     QCoreApplication app(argc, argv);
     const QStringList args = app.arguments();
+    if (args.size() >= 3 && args[1] == "candle-probe")
+        return runCandleProbe(args[2]);
+    if (args.size() >= 3 && args[1] == "candle-leave")
+        return runCandleLeave(args[2]);
+    if (args.size() >= 4 && args[1] == "candle-bus")
+        return runCandleBus(args[2], qPrintable(args[3]));
+
     if (args.size() >= 4 && args[1] == "bus")
     {
         const bool elmue = args.size() > 4 && args[4] == "elmue";

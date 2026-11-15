@@ -22,7 +22,6 @@
 #include "candle_ctrl_req.h"
 #include "ch_9.h"
 
-#include <stdarg.h>
 
 enum {
     CANDLE_BREQ_HOST_FORMAT    = 0,
@@ -42,45 +41,17 @@ enum {
     CANDLE_BREQ_BUS_OFF_RECOVERY = 32,
 };
 
-static void candle_ctrl_logf(const wchar_t *fmt, ...)
+// Vendor control transfer to the gs_usb interface; logged when verbose.
+static bool usb_control_msg(candle_device_t *dev, uint8_t request, uint8_t requesttype, uint16_t value, uint16_t index, void *data, uint16_t size)
 {
-    if (candle_log_fn == NULL || !candle_log_verbose) {
-        return;
-    }
-
-    wchar_t buf[512];
-    va_list args;
-    va_start(args, fmt);
-    HRESULT hr = StringCchVPrintfW(buf, 512, fmt, args);
-    va_end(args);
-
-    if (SUCCEEDED(hr)) {
-        candle_log_fn(buf);
-    }
-}
-
-static bool usb_control_msg(WINUSB_INTERFACE_HANDLE hnd, uint8_t request, uint8_t requesttype, uint16_t value, uint16_t index, void *data, uint16_t size)
-{
-    WINUSB_SETUP_PACKET packet;
-    memset(&packet, 0, sizeof(packet));
-
-    packet.Request = request;
-    packet.RequestType = requesttype;
-    packet.Value = value;
-    packet.Index = index;
-    packet.Length = size;
-
-    unsigned long bytes_sent = 0;
-    BOOL rc = WinUsb_ControlTransfer(hnd, packet, (uint8_t*)data, size, &bytes_sent, 0);
-    candle_ctrl_logf(L"ctrl req=0x%02x type=0x%02x value=%u index=%u size=%u rc=%u transferred=%lu winerr=%lu",
-                     request,
-                     requesttype,
-                     value,
-                     index,
-                     size,
-                     rc ? 1 : 0,
-                     bytes_sent,
-                     rc ? 0 : GetLastError());
+    bool rc = candle_usb_control(dev->usb, request, requesttype, value, index, data, size);
+    candle_logf_verbose(L"ctrl req=0x%02x type=0x%02x value=%u index=%u size=%u rc=%u",
+                        request,
+                        requesttype,
+                        value,
+                        index,
+                        size,
+                        rc ? 1 : 0);
     return rc;
 }
 
@@ -90,7 +61,7 @@ bool candle_ctrl_set_host_format(candle_device_t *dev)
     hconf.byte_order = 0x0000beef;
 
     bool rc = usb_control_msg(
-        dev->winUSBHandle,
+        dev,
         CANDLE_BREQ_HOST_FORMAT,
         USB_DIR_OUT|USB_TYPE_VENDOR|USB_RECIP_INTERFACE,
         1,
@@ -110,7 +81,7 @@ bool candle_ctrl_set_device_mode(candle_device_t *dev, uint8_t channel, uint32_t
     dm.flags = flags;
 
     bool rc = usb_control_msg(
-        dev->winUSBHandle,
+        dev,
         CANDLE_BREQ_MODE,
         USB_DIR_OUT|USB_TYPE_VENDOR|USB_RECIP_INTERFACE,
         channel,
@@ -127,7 +98,7 @@ bool candle_ctrl_set_device_mode(candle_device_t *dev, uint8_t channel, uint32_t
 bool candle_ctrl_get_config(candle_device_t *dev, candle_device_config_t *dconf)
 {
     bool rc = usb_control_msg(
-        dev->winUSBHandle,
+        dev,
         CANDLE_BREQ_DEVICE_CONFIG,
         USB_DIR_IN|USB_TYPE_VENDOR|USB_RECIP_INTERFACE,
         1,
@@ -142,11 +113,14 @@ bool candle_ctrl_get_config(candle_device_t *dev, candle_device_config_t *dconf)
 
 bool candle_ctrl_get_timestamp(candle_device_t *dev, uint32_t *current_timestamp)
 {
+    /* wValue is a channel number for this request in candleLight
+     * (USBD_GS_CAN_Config_Request: only HOST_FORMAT and DEVICE_CONFIG are per
+     * device): 1 stalls on a single-channel board. Channel 0 always exists. */
     bool rc = usb_control_msg(
-        dev->winUSBHandle,
+        dev,
         CANDLE_TIMESTAMP_GET,
         USB_DIR_IN|USB_TYPE_VENDOR|USB_RECIP_INTERFACE,
-        1,
+        0,
         dev->interfaceNumber,
         current_timestamp,
         sizeof(*current_timestamp)
@@ -159,7 +133,7 @@ bool candle_ctrl_get_timestamp(candle_device_t *dev, uint32_t *current_timestamp
 bool candle_ctrl_get_capability(candle_device_t *dev, uint8_t channel, candle_capability_t *data)
 {
     bool rc = usb_control_msg(
-        dev->winUSBHandle,
+        dev,
         CANDLE_BREQ_BT_CONST,
         USB_DIR_IN|USB_TYPE_VENDOR|USB_RECIP_INTERFACE,
         channel,
@@ -175,7 +149,7 @@ bool candle_ctrl_get_capability(candle_device_t *dev, uint8_t channel, candle_ca
 bool candle_ctrl_set_bittiming(candle_device_t *dev, uint8_t channel, candle_bittiming_t *data)
 {
     bool rc = usb_control_msg(
-        dev->winUSBHandle,
+        dev,
         CANDLE_BREQ_BITTIMING,
         USB_DIR_OUT|USB_TYPE_VENDOR|USB_RECIP_INTERFACE,
         channel,
@@ -191,7 +165,7 @@ bool candle_ctrl_set_bittiming(candle_device_t *dev, uint8_t channel, candle_bit
 bool candle_ctrl_set_data_bittiming(candle_device_t *dev, uint8_t channel, candle_bittiming_t *data)
 {
     bool rc = usb_control_msg(
-        dev->winUSBHandle,
+        dev,
         CANDLE_BREQ_DATA_BITTIMING,
         USB_DIR_OUT|USB_TYPE_VENDOR|USB_RECIP_INTERFACE,
         channel,
@@ -207,7 +181,7 @@ bool candle_ctrl_set_data_bittiming(candle_device_t *dev, uint8_t channel, candl
 bool candle_ctrl_set_tdc(candle_device_t *dev, uint8_t channel, candle_device_tdc_t *data)
 {
     bool rc = usb_control_msg(
-        dev->winUSBHandle,
+        dev,
         CANDLE_BREQ_SET_TDC,
         USB_DIR_OUT|USB_TYPE_VENDOR|USB_RECIP_INTERFACE,
         channel,
@@ -225,7 +199,7 @@ bool candle_ctrl_bus_off_recovery(candle_device_t *dev, uint8_t channel)
     candle_device_bus_off_recovery_t data = { 0 };
 
     bool rc = usb_control_msg(
-        dev->winUSBHandle,
+        dev,
         CANDLE_BREQ_BUS_OFF_RECOVERY,
         USB_DIR_OUT|USB_TYPE_VENDOR|USB_RECIP_INTERFACE,
         channel,
@@ -241,7 +215,7 @@ bool candle_ctrl_bus_off_recovery(candle_device_t *dev, uint8_t channel)
 bool candle_ctrl_get_state(candle_device_t *dev, uint8_t channel, candle_device_state_t *data)
 {
     bool rc = usb_control_msg(
-        dev->winUSBHandle,
+        dev,
         CANDLE_BREQ_GET_STATE,
         USB_DIR_IN|USB_TYPE_VENDOR|USB_RECIP_INTERFACE,
         channel,

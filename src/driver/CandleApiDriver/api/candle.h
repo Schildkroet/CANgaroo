@@ -23,6 +23,7 @@
 #pragma once
 #include <stdint.h>
 #include <stdbool.h>
+#include <wchar.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -239,6 +240,11 @@ static inline uint8_t candle_len_to_dlc(uint8_t len)
 }
 
 #define DLL
+
+/* The API is __stdcall on Windows; elsewhere (tests, hw_compare) it is plain C. */
+#if !defined(_WIN32) && !defined(__stdcall)
+#define __stdcall
+#endif
 
 /* Optional log callback — set once at startup to receive diagnostic messages.
  * If NULL (the default) no logging is performed. */

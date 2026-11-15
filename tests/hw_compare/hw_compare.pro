@@ -6,9 +6,14 @@ INCLUDEPATH += $$PWD/..
 CONFIG -= testcase
 QT -= testlib
 QT += serialport xml
+QMAKE_CFLAGS += -std=gnu11
+CONFIG += link_pkgconfig
+PKGCONFIG += libusb-1.0
 
 HEADERS += \
     ../slcan_driver/FakeSlcanDevice.h \
+    ../candle_driver/FakeGsUsbDevice.h \
+    $$SRC_DIR/driver/CandleApiDriver/CandleApiInterface.h \
     ../support/FakeSerialPort.h \
     $$SRC_DIR/driver/BusInterface.h \
     $$SRC_DIR/driver/SLCANDriver/SLCANInterface.h \
@@ -17,6 +22,13 @@ HEADERS += \
 SOURCES += \
     main.cpp \
     ../slcan_driver/FakeSlcanDevice.cpp \
+    ../candle_driver/FakeGsUsbDevice.cpp \
+    candle_usb_hw.cpp \
+    $$SRC_DIR/driver/CandleApiDriver/CandleApiInterface.cpp \
+    $$SRC_DIR/driver/CandleApiDriver/CandleSharedDevice.cpp \
+    $$SRC_DIR/driver/CandleApiDriver/CandleApiTiming.cpp \
+    $$SRC_DIR/driver/CandleApiDriver/api/candle.c \
+    $$SRC_DIR/driver/CandleApiDriver/api/candle_ctrl_req.c \
     ../support/FakeSerialPort.cpp \
     ../support/LogCapture.cpp \
     ../support/MeasurementInterfaceStub.cpp \

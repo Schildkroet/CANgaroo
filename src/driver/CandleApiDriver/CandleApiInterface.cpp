@@ -18,22 +18,24 @@
 */
 
 #include "CandleApiInterface.h"
-#include "CandleApiDriver.h"
+
+#include "core/Log.h"
 
 #include <QDateTime>
 #include <QMutexLocker>
 
 #include <algorithm>
 
-CandleApiInterface::CandleApiInterface(CandleApiDriver *driver,
+CandleApiInterface::CandleApiInterface(CanDriver *driver,
                                        std::shared_ptr<CandleSharedDevice> sharedDev,
-                                       uint8_t channel)
-  : BusInterface(reinterpret_cast<CanDriver*>(driver)),
+                                       uint8_t channel,
+                                       std::function<uint64_t()> hostClockUs)
+  : BusInterface(driver),
     _channel(channel),
     _isOpen(false),
     _isFdEnabled(false),
     _sharedDev(std::move(sharedDev)),
-    _backend(driver->backend()),
+    _hostClockUs(std::move(hostClockUs)),
     _numRx(0),
     _numTx(0),
     _numTxErr(0),
@@ -114,7 +116,8 @@ CandleApiInterface::CandleApiInterface(CandleApiDriver *driver,
         << CandleApiTiming(48000000,  125000, 500,  24, 6, 8)
         << CandleApiTiming(48000000,  250000, 500,  12, 6, 8)
         << CandleApiTiming(48000000,  500000, 500,   6, 6, 8)
-        << CandleApiTiming(48000000,  800000, 500,   3, 8, 10)
+        // bxCAN (candleLight F042/F072): tseg2 <= 8, so 3 * (1+1+8+10) is refused
+        << CandleApiTiming(48000000,  800000, 500,   5, 4, 6)
         << CandleApiTiming(48000000, 1000000, 500,   3, 6, 8)
 
         // sample point: 62.5%
@@ -434,6 +437,11 @@ void CandleApiInterface::open()
         }
     }
 
+    // A channel still running from an earlier session (another program, or
+    // cangaroo killed) must be stopped first: the ElmueSoft firmware ignores a
+    // bit timing and START while it runs, without telling the host.
+    candle_channel_stop(_sharedDev->handle, _channel);
+
     if (!setBitTiming(_settings.bitrate(), _settings.samplePoint())) {
         log_error(tr("CandleApi: set bitrate failed"));
         if (firstOpen) {
@@ -554,9 +562,7 @@ void CandleApiInterface::open()
 
     if (firstOpen) {
         uint32_t t_dev = 0;
-        const uint64_t hostNowUs =
-                _backend.getUsecsAtMeasurementStart() +
-                _backend.getUsecsSinceMeasurementStart();
+        const uint64_t hostNowUs = _hostClockUs();
         if (candle_dev_get_timestamp_us(_sharedDev->handle, &t_dev)) {
             _sharedDev->resetTimestampEpoch(hostNowUs, t_dev, true);
         } else {
@@ -654,9 +660,11 @@ void CandleApiInterface::sendMessage(const BusMessage &msg)
     _sharedDev->writeMutex.unlock();
 
     if (ok) {
-        // Not shown yet: the device echoes the frame once it has actually been
-        // transmitted (see readMessage()), so a frame that never makes it onto
-        // the bus (e.g. no ACK with the cable unplugged) never appears as TX.
+        // Not shown yet: it is shown when the device echoes it (readMessage()).
+        // candleLight and the ElmueSoft firmware send that echo as soon as the
+        // frame is in the CAN controller's TX buffer, not when it was ACKed, so
+        // a frame shown as sent may still not have made it onto the bus. Frames
+        // the firmware drops (listen only, closed channel) are never echoed.
         BusMessage txMsg = msg;
         txMsg.setFD(_isFdEnabled && (msg.isFD() || msg.getLength() > 8));
         txMsg.setRX(false);
@@ -717,6 +725,10 @@ bool CandleApiInterface::readMessage(QList<BusMessage> &msglist, unsigned int ti
     // The reader thread fills per-channel queues; we just wait for our channel.
     CandleQueuedFrame queuedFrame;
     if (!_sharedDev->readFrame(_channel, queuedFrame, timeout_ms)) {
+        if (_isOpen && _sharedDev->lost.load(std::memory_order_relaxed)) {
+            log_error(tr("CandleApi: connection to %1 lost").arg(getName()));
+            _isOpen = false;
+        }
         return false;
     }
     candle_fd_frame_t frame = queuedFrame.frame;
