@@ -23,6 +23,7 @@
 #include "UlcInterface.h"
 #include "core/Backend.h"
 #include "driver/GenericLinSetupPage.h"
+#include "driver/SerialTransport/QtSerialTransport.h"
 
 #include <iostream>
 
@@ -154,7 +155,7 @@ UlcInterface *UlcDriver::createOrUpdateInterface(int index, QString portName)
         }
     }
 
-    auto *ulcif = new UlcInterface(this, index, std::move(portName));
+    auto *ulcif = new UlcInterface(this, index, std::move(portName), QtSerialTransport::factory());
     addInterface(ulcif);
     return ulcif;
 }

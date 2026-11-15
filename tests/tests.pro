@@ -18,4 +18,5 @@ SUBDIRS += \
     ldf_parser \
     slcan_codec \
     ulc_codec \
+    ulc_driver \
     measurement_setup

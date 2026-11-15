@@ -12,7 +12,7 @@ TEMPLATE = app
 CONFIG += warn_on
 CONFIG += link_pkgconfig
 
-VERSION = 0.7.1
+VERSION = 0.7.2
 DEFINES += VERSION_STRING=\\\"$${VERSION}\\\"
 
 TRANSLATIONS = \
@@ -59,6 +59,9 @@ unix:INCLUDEPATH += /usr/include/libnl3
 unix:include($$PWD/driver/SocketCanDriver/SocketCanDriver.pri)
 
 include($$PWD/driver/CANBlastDriver/CANBlastDriver.pri)
+# Serial port seam for drivers that take a simulated device in tests (uLC).
+# Included once here, not from the driver .pri files.
+include($$PWD/driver/SerialTransport/SerialTransport.pri)
 include($$PWD/driver/SLCANDriver/SLCANDriver.pri)
 include($$PWD/driver/UlcDriver/UlcDriver.pri)
 include($$PWD/driver/GrIPDriver/GrIPDriver.pri)

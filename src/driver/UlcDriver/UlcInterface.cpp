@@ -33,6 +33,8 @@
 
 #include "UlcFrameCodec.h"
 
+using namespace std::chrono_literals;
+
 static int64_t nowMicroseconds() noexcept
 {
     return std::chrono::duration_cast<std::chrono::microseconds>(
@@ -42,10 +44,12 @@ static int64_t nowMicroseconds() noexcept
 
 // ── Construction ─────────────────────────────────────────────────────────────
 
-UlcInterface::UlcInterface(UlcDriver *driver, int index, QString portName)
+UlcInterface::UlcInterface(UlcDriver *driver, int index, QString portName,
+                           SerialTransportFactory transportFactory)
     : BusInterface(driver)
     , _idx(index)
     , _name(std::move(portName))
+    , _transportFactory(std::move(transportFactory))
 {
     _settings.setBusType(BusType::LIN);
     _settings.setLinBaudRate(19200);
@@ -302,7 +306,7 @@ QList<QByteArray> UlcInterface::slaveTableCommands(const LinDb &ldb, QSet<uint8_
 std::optional<QByteArray> UlcInterface::transact(const QByteArray &cmd, int timeout_ms)
 {
     _port->write(cmd);
-    _port->waitForBytesWritten(50);
+    _port->waitForBytesWritten(50ms);
 
     QElapsedTimer timer;
     timer.start();
@@ -332,11 +336,11 @@ std::optional<QByteArray> UlcInterface::transact(const QByteArray &cmd, int time
             return line;
         }
 
-        // Data may already sit in QSerialPort's buffer: waitForBytesWritten()
+        // Data may already sit in the port's buffer: waitForBytesWritten()
         // also reads, and waitForReadyRead() would only wait for newer bytes.
         const qint64 remaining = timeout_ms - timer.elapsed();
         if (_port->bytesAvailable() == 0 &&
-            (remaining <= 0 || !_port->waitForReadyRead(static_cast<int>(remaining))))
+            (remaining <= 0 || !_port->waitForReadyRead(std::chrono::milliseconds(remaining))))
             return std::nullopt;
         _rxLineBuffer += _port->readAll();
     }
@@ -350,13 +354,7 @@ void UlcInterface::open()
         _sentPayloads.clear();
     }
 
-    _port = std::make_unique<QSerialPort>();
-    _port->setPortName(_name);
-    _port->setBaudRate(115200); // USB CDC: the line rate is ignored
-    _port->setDataBits(QSerialPort::Data8);
-    _port->setParity(QSerialPort::NoParity);
-    _port->setStopBits(QSerialPort::OneStop);
-    _port->setFlowControl(QSerialPort::NoFlowControl);
+    _port = _transportFactory();
 
     auto fail = [this]() {
         _port->close();
@@ -365,7 +363,8 @@ void UlcInterface::open()
         _isOffline = true;
     };
 
-    if (!_port->open(QIODevice::ReadWrite))
+    // USB CDC: the line rate is ignored
+    if (!_port->open(_name, SerialTransport::Settings{.baudRate = 115200}))
     {
         log_error(tr("uLC: failed to open %1: %2").arg(_name, _port->errorString()));
         _port.reset();
@@ -506,8 +505,8 @@ void UlcInterface::close()
     if (_port && _port->isOpen())
     {
         _port->write(ulc::k_cmdClose);
-        _port->waitForBytesWritten(50);
-        _port->waitForReadyRead(20);
+        _port->waitForBytesWritten(50ms);
+        _port->waitForReadyRead(20ms);
         _port->clear();
         _port->close();
     }
@@ -669,7 +668,7 @@ void UlcInterface::drainTxQueue()
         }
 
         const qint64 written = _port->write(entry.cmd);
-        _port->waitForBytesWritten(50);
+        _port->waitForBytesWritten(50ms);
 
         if (written != entry.cmd.size())
         {
@@ -770,12 +769,11 @@ void UlcInterface::handleLine(QList<BusMessage> &msglist)
 }
 
 
-// An unplugged adapter leaves the QSerialPort open and only reports an error
+// An unplugged adapter leaves the serial port open and only reports an error
 // (ResourceError on Linux, others elsewhere), so isOpen() alone misses it.
 bool UlcInterface::checkPortLost()
 {
-    const QSerialPort::SerialPortError err = _port->error();
-    if (_port->isOpen() && (err == QSerialPort::NoError || err == QSerialPort::TimeoutError))
+    if (_port->isOpen() && !_port->hasFailed())
         return false;
 
     log_error(tr("uLC: connection to %1 lost (%2)").arg(_name, _port->errorString()));
@@ -803,7 +801,7 @@ bool UlcInterface::readMessage(QList<BusMessage> &msglist, unsigned int timeout_
 
     // Block until data arrives (or timeout) instead of busy-spinning. Bytes
     // already buffered (e.g. read during waitForBytesWritten()) count as arrived.
-    if (_port->bytesAvailable() == 0 && !_port->waitForReadyRead(static_cast<int>(timeout_ms)))
+    if (_port->bytesAvailable() == 0 && !_port->waitForReadyRead(std::chrono::milliseconds(timeout_ms)))
     {
         // A plain timeout is the idle case; anything else means the port is gone.
         checkPortLost();

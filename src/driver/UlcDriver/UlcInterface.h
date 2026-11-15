@@ -21,9 +21,6 @@
 
 #pragma once
 
-#include "driver/BusInterface.h"
-#include "core/MeasurementInterface.h"
-
 #include <atomic>
 #include <memory>
 #include <optional>
@@ -35,7 +32,10 @@
 #include <QMutex>
 #include <QSet>
 #include <QString>
-#include <QtSerialPort/QSerialPort>
+
+#include "core/MeasurementInterface.h"
+#include "driver/BusInterface.h"
+#include "driver/SerialTransport/SerialTransport.h"
 
 class UlcDriver;
 class LinDb;
@@ -47,7 +47,10 @@ class UlcInterface : public BusInterface
     Q_OBJECT
 
 public:
-    UlcInterface(UlcDriver *driver, int index, QString portName);
+    // `transportFactory` makes the port each open() talks to: a real serial
+    // port from UlcDriver, a simulated device in tests.
+    UlcInterface(UlcDriver *driver, int index, QString portName,
+                 SerialTransportFactory transportFactory);
     ~UlcInterface() override;
 
     QString getName() const override;
@@ -121,7 +124,8 @@ private:
     MeasurementInterface _settings;
     Mode _mode{Mode::Monitor};
 
-    std::unique_ptr<QSerialPort> _port;
+    SerialTransportFactory _transportFactory;
+    std::unique_ptr<SerialTransport> _port;
     QByteArray _rxLineBuffer;
 
     // Frame IDs whose payload this node publishes in the running table. Only
