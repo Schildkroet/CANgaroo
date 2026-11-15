@@ -83,8 +83,19 @@ bool SLCANDriver::update()
         }
         else if (vid == 0x16D0 && pid == 0x117E)
         {
-            std::cout << "   ++ CANable 2.0 detected: " << info.portName().toStdString() << '\n';
-            createOrUpdateInterface(ifaceIdx++, info.portName(), true, Mfr::CANable);
+            // ElmueSoft's CANable 2.5 Slcan firmware keeps the CANable 2 ID on
+            // every board it supports. Where the USB strings are not available
+            // (Windows), SLCANInterface still recognises it on open().
+            if (info.manufacturer().startsWith(QStringLiteral("ElmueSoft")))
+            {
+                std::cout << "   ++ CANable 2.5 (ElmueSoft Slcan) detected: " << info.portName().toStdString() << '\n';
+                createOrUpdateInterface(ifaceIdx++, info.portName(), true, Mfr::Elmue);
+            }
+            else
+            {
+                std::cout << "   ++ CANable 2.0 detected: " << info.portName().toStdString() << '\n';
+                createOrUpdateInterface(ifaceIdx++, info.portName(), true, Mfr::CANable);
+            }
         }
         else if (vid == 0x0483 && pid == 0x5740 && info.serialNumber().startsWith("AAA"))
         {

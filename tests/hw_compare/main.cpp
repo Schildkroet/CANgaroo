@@ -21,9 +21,9 @@
 
 // Checks a simulated SLCAN adapter against the real one.
 //
-//   slcan_hw_compare probe  <port> | fake:<canable1|canable2|weact>
-//   slcan_hw_compare driver <port> | fake:<...>  [canable1|canable2|weact]
-//   slcan_hw_compare bus    <port> <socketcan if>   (CANable 2, 500k / 2M)
+//   slcan_hw_compare probe  <port> | fake:<canable1|canable2|weact|elmue>
+//   slcan_hw_compare driver <port> | fake:<...>  [canable1|canable2|weact|elmue]
+//   slcan_hw_compare bus    <port> <socketcan if> [canable2|elmue]   (500k / 2M)
 //
 // "probe" sends a fixed list of command scripts and prints every reply byte;
 // run it once against the device and once against the fake and diff the two.
@@ -125,6 +125,22 @@ const QList<Probe> &probes()
         {"short after long", {"t7FF0\r", "\r"}},
         {"close again",      {"C\r"}},
         {"batched config",   {"S6\rM0\rO\rC\r"}},
+        // After closing an open channel Elmue forgets its bitrates (can_reset)
+        {"open without bitrate", {"O\r"}},
+        {"data bitrate Y3",  {"Y3\r"}},
+        {"bitrate S7",       {"S7\r"}},
+        {"data bitrate Y8",  {"Y8\r"}},
+        {"silent open",      {"M1\r", "O\r"}},
+        {"frame while silent", {"t1230\r"}},
+        {"close silent",     {"C\r"}},
+        {"open classic",     {"S6\r", "O\r"}},
+        {"fd, no data rate", {"d1230\r"}},
+        {"remote frame",     {"r1234\r"}},
+        {"id too short",     {"t12\r"}},
+        {"data short",       {"t1232AB\r"}},
+        {"trailing digits",  {"t1231AB00\r"}},
+        {"std id too large", {"t8001AB\r"}},
+        {"final close",      {"C\r"}},
     };
     return list;
 }
@@ -156,6 +172,8 @@ int runDriver(SerialTransportFactory factory, const QString &name, SLCANInterfac
     {
         mi.setCanFD(true);
         mi.setFdBitrate(2000000);
+        mi.setSamplePoint(875);    // as the SocketCAN side: 0.875 / 0.750
+        mi.setFdSamplePoint(750);
     }
     intf.applyConfig(mi);
 
@@ -314,8 +332,10 @@ BusMessage toMessage(const Frame &f)
     return msg;
 }
 
-int runBus(const QString &portName, const char *ifname)
+int runBus(const QString &portName, const char *ifname, FakeSlcanDevice::Firmware fw)
 {
+    const auto mfr = fw == FakeSlcanDevice::Firmware::Elmue ? SLCANInterface::Manufacturer::Elmue
+                                                           : SLCANInterface::Manufacturer::CANable;
     CanSocket can(ifname);
     if (!can.ok())
     {
@@ -330,7 +350,7 @@ int runBus(const QString &portName, const char *ifname)
         auto real = QtSerialTransport::factory()();
         if (!real->open(portName, SerialTransport::Settings{.baudRate = 1000000}))
             return 1;
-        FakeSlcanDevice dev(FakeSlcanDevice::Firmware::CANable2);
+        FakeSlcanDevice dev(fw);
         auto fake = dev.factory()();
         (void)fake->open("fake0", {});
         real->clear();
@@ -360,14 +380,15 @@ int runBus(const QString &portName, const char *ifname)
 
     // TX: what SLCANInterface puts on the wire, on the device and on the fake
     {
-        FakeSlcanDevice dev(FakeSlcanDevice::Firmware::CANable2);
-        SLCANInterface real(nullptr, 0, portName, true, SLCANInterface::Manufacturer::CANable,
-                            QtSerialTransport::factory());
-        SLCANInterface fake(nullptr, 1, "fake0", true, SLCANInterface::Manufacturer::CANable, dev.factory());
+        FakeSlcanDevice dev(fw);
+        SLCANInterface real(nullptr, 0, portName, true, mfr, QtSerialTransport::factory());
+        SLCANInterface fake(nullptr, 1, "fake0", true, mfr, dev.factory());
         MeasurementInterface mi;
         mi.setBitrate(500000);
         mi.setCanFD(true);
         mi.setFdBitrate(2000000);
+        mi.setSamplePoint(875);    // as the SocketCAN side: 0.875 / 0.750
+        mi.setFdSamplePoint(750);
         for (SLCANInterface *i : {&real, &fake})
         {
             i->applyConfig(mi);
@@ -401,6 +422,43 @@ int runBus(const QString &portName, const char *ifname)
         real.close();
         fake.close();
     }
+
+    // Listen only: nothing may reach the wire, and what the driver reports
+    // about the attempt must be the same on device and fake.
+    {
+        FakeSlcanDevice dev(fw);
+        SLCANInterface real(nullptr, 0, portName, true, mfr, QtSerialTransport::factory());
+        SLCANInterface fake(nullptr, 1, "fake0", true, mfr, dev.factory());
+        MeasurementInterface mi;
+        mi.setBitrate(500000);
+        mi.setCanFD(true);
+        mi.setFdBitrate(2000000);
+        mi.setSamplePoint(875);    // as the SocketCAN side: 0.875 / 0.750
+        mi.setFdSamplePoint(750);
+        mi.setListenOnlyMode(true);
+        for (SLCANInterface *i : {&real, &fake})
+        {
+            i->applyConfig(mi);
+            i->open();
+            i->sendMessage(toMessage(frameCases().first().second));
+        }
+        QList<BusMessage> rs, fs;
+        for (int i = 0; i < 20; ++i)
+        {
+            real.readMessage(rs, 5);
+            fake.readMessage(fs, 1);
+        }
+        const QList<Frame> wire = can.receive(200);
+        const bool same = real.getNumTxErrors() == fake.getNumTxErrors() &&
+                          real.getNumTxFrames() == fake.getNumTxFrames() && rs.size() == fs.size();
+        diffs += same ? 0 : 1;
+        std::printf("listen only        %s wire %lld frame(s); real tx %d err %d shown %lld, fake tx %d err %d shown %lld\n",
+                    same ? "same" : "DIFF", static_cast<long long>(wire.size()), real.getNumTxFrames(),
+                    real.getNumTxErrors(), static_cast<long long>(rs.size()), fake.getNumTxFrames(),
+                    fake.getNumTxErrors(), static_cast<long long>(fs.size()));
+        real.close();
+        fake.close();
+    }
     std::printf("%d difference(s)\n", diffs);
     return diffs == 0 ? 0 : 3;
 }
@@ -412,7 +470,11 @@ int main(int argc, char *argv[])
     QCoreApplication app(argc, argv);
     const QStringList args = app.arguments();
     if (args.size() >= 4 && args[1] == "bus")
-        return runBus(args[2], qPrintable(args[3]));
+    {
+        const bool elmue = args.size() > 4 && args[4] == "elmue";
+        return runBus(args[2], qPrintable(args[3]),
+                      elmue ? FakeSlcanDevice::Firmware::Elmue : FakeSlcanDevice::Firmware::CANable2);
+    }
 
     if (args.size() < 3 || (args[1] != "probe" && args[1] != "driver"))
     {
@@ -424,6 +486,7 @@ int main(int argc, char *argv[])
     const auto firmwareFor = [](const QString &n) {
         if (n == "canable1") return FakeSlcanDevice::Firmware::CANable1;
         if (n == "weact")    return FakeSlcanDevice::Firmware::WeAct;
+        if (n == "elmue")    return FakeSlcanDevice::Firmware::Elmue;
         return FakeSlcanDevice::Firmware::CANable2;
     };
 

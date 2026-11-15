@@ -46,12 +46,15 @@
 #include <chrono>
 #include <span>
 
+#include <QElapsedTimer>
+
 #include <QList>
 #include <QString>
 
 #include "core/Log.h"
 #include "core/MeasurementInterface.h"
 
+#include "SlcanBitTiming.h"
 #include "SlcanFrameCodec.h"
 
 using namespace std::chrono_literals;
@@ -81,7 +84,7 @@ static constexpr std::array<RateEntry, 10> kCanableBitrateTable = {{
     {20000,   "S1"}, {10000,   "S0"},
 }};
 
-// FD data bitrate → SLCAN 'Y' command
+// FD data bitrate → SLCAN 'Y' command. Elmue has no Y3 (3M); it is not offered there.
 static constexpr std::array<RateEntry, 5> kFdBitrateTable = {{
     {1000000, "Y1"}, {2000000, "Y2"}, {3000000, "Y3"},
     {4000000, "Y4"}, {5000000, "Y5"},
@@ -136,6 +139,8 @@ QString SLCANInterface::getDetailsStr() const
         case Manufacturer::WeActStudio:
             return fd ? tr("WeAct Studio USB2CAN with CANFD support")
                       : tr("WeAct Studio USB2CAN with standard CAN support");
+        case Manufacturer::Elmue:
+            return tr("CANable 2.5 (ElmueSoft Slcan firmware) with CANFD support");
     }
     return tr("SLCAN device");
 }
@@ -175,6 +180,13 @@ QList<CanTiming> SLCANInterface::getAvailableBitrates()
                             100000, 125000, 250000, 500000, 800000, 1000000};
             fdBitrates   = {1000000, 2000000, 3000000, 4000000, 5000000};
             break;
+        case Manufacturer::Elmue:
+            // Slcan/control.h: the WeAct letters S0-SD; Y0/1/2/4/5/8, of which
+            // 8M only on STM32G4 and 500k is below what a setup page offers.
+            bitrates     = {5000, 10000, 20000, 33333, 50000, 62500, 75000, 83333,
+                            100000, 125000, 250000, 500000, 800000, 1000000};
+            fdBitrates   = {1000000, 2000000, 4000000, 5000000};
+            break;
     }
 
     QList<CanTiming> result;
@@ -210,7 +222,14 @@ uint32_t SLCANInterface::getCapabilities()
         case Manufacturer::WeActStudio:
             caps = capability_listen_only | capability_custom_bitrate | capability_custom_canfd_bitrate;
             break;
+        case Manufacturer::Elmue:
+            break;
     }
+
+    // Elmue's "M1" opens in bus monitoring mode, unlike the stock CANable
+    // firmware. Custom timings use another format there ("s"/"y", decimal).
+    if (isElmue())
+        caps = (caps & ~capability_custom_bitrate & ~capability_custom_canfd_bitrate) | capability_listen_only;
 
     if (_fdSupport)
         caps |= capability_canfd;
@@ -232,6 +251,62 @@ void SLCANInterface::writePort(const QByteArray &data)
     _port->waitForBytesWritten(50ms);
 }
 
+bool SLCANInterface::isElmue() const
+{
+    return _manufacturer == Manufacturer::Elmue || _elmueFirmware.load(std::memory_order_relaxed);
+}
+
+QByteArray SLCANInterface::elmueTimingCommand(bool data) const
+{
+    if (!isElmue() || _elmueClockHz == 0)
+        return {};
+
+    const unsigned bitrate = data ? _settings.fdBitrate() : _settings.bitrate();
+    const int samplePoint = data ? static_cast<int>(_settings.fdSamplePoint()) : _settings.samplePoint();
+    const size_t base = data ? 4 : 0;
+    const slcan::TimingLimits lim{.brpMax = _elmueLimits[base], .seg1Max = _elmueLimits[base + 1],
+                                  .seg2Max = _elmueLimits[base + 2], .sjwMax = _elmueLimits[base + 3]};
+
+    const auto t = slcan::calcBitTiming(_elmueClockHz, bitrate, static_cast<uint32_t>(samplePoint), lim);
+    if (!t)
+        return {};
+    return QStringLiteral("%1%2,%3,%4,%5\r")
+        .arg(data ? 'y' : 's').arg(t->brp).arg(t->seg1).arg(t->seg2).arg(t->sjw)
+        .toLatin1();
+}
+
+bool SLCANInterface::sendConfig(const QByteArray &cmd)
+{
+    writePort(cmd);
+    if (_noConfirm.load(std::memory_order_relaxed))
+        return true;
+
+    // Only setup commands are in flight here and the channel is closed, so
+    // the first CR or BEL is this command's answer.
+    constexpr qint64 k_timeoutMs = 100;
+    QElapsedTimer timer;
+    timer.start();
+    for (;;)
+    {
+        const QByteArray reply = _port->readAll();
+        const int cr = reply.indexOf('\r');
+        const int bel = reply.indexOf('\x07');
+        if (bel >= 0 && (cr < 0 || bel < cr))
+        {
+            log_warning(tr("SLCAN: %1 refused \"%2\"").arg(_name, QString::fromLatin1(cmd.trimmed())));
+            return false;
+        }
+        if (cr >= 0)
+            return true;
+
+        const qint64 remaining = k_timeoutMs - timer.elapsed();
+        if (remaining <= 0 || !_port->waitForReadyRead(std::chrono::milliseconds(remaining)))
+            break;
+    }
+    log_warning(tr("SLCAN: %1 did not answer \"%2\"").arg(_name, QString::fromLatin1(cmd.trimmed())));
+    return false;
+}
+
 void SLCANInterface::configureBitrate()
 {
     if (_settings.isCustomBitrate())
@@ -239,11 +314,15 @@ void SLCANInterface::configureBitrate()
         QByteArray cmd = "S";
         cmd += QString::number(_settings.customBitrate(), 16).toUpper().rightJustified(6, '0').toLatin1();
         cmd += '\r';
-        writePort(cmd);
+        sendConfig(cmd);
         return;
     }
 
-    const std::span<const RateEntry> table = _manufacturer == Manufacturer::WeActStudio
+    // Elmue: exact timing at the configured sample point, see SlcanBitTiming.h
+    if (const QByteArray timing = elmueTimingCommand(false); !timing.isEmpty() && sendConfig(timing))
+        return;
+
+    const std::span<const RateEntry> table = (_manufacturer == Manufacturer::WeActStudio || isElmue())
         ? std::span<const RateEntry>(kWeActBitrateTable)
         : std::span<const RateEntry>(kCanableBitrateTable);
     for (const auto &entry : table)
@@ -252,12 +331,12 @@ void SLCANInterface::configureBitrate()
         {
             QByteArray cmd = entry.cmd;
             cmd += '\r';
-            writePort(cmd);
+            sendConfig(cmd);
             return;
         }
     }
     // Fallback: 500 kbit/s
-    writePort("S6\r");
+    sendConfig("S6\r");
 }
 
 void SLCANInterface::configureFdBitrate()
@@ -267,22 +346,25 @@ void SLCANInterface::configureFdBitrate()
         QByteArray cmd = "Y";
         cmd += QString::number(_settings.customFdBitrate(), 16).toUpper().rightJustified(6, '0').toLatin1();
         cmd += '\r';
-        writePort(cmd);
+        sendConfig(cmd);
         return;
     }
 
+    if (const QByteArray timing = elmueTimingCommand(true); !timing.isEmpty() && sendConfig(timing))
+        return;
+
     for (const auto &entry : kFdBitrateTable)
     {
-        if (entry.bitrate == _settings.fdBitrate())
+        if (entry.bitrate == _settings.fdBitrate() && !(isElmue() && entry.bitrate == 3000000))
         {
             QByteArray cmd = entry.cmd;
             cmd += '\r';
-            writePort(cmd);
+            sendConfig(cmd);
             return;
         }
     }
     // Fallback: 2 Mbit/s
-    writePort("Y2\r");
+    sendConfig("Y2\r");
 }
 
 
@@ -326,12 +408,45 @@ void SLCANInterface::open()
     _noConfirm = !_port->waitForReadyRead(50ms);
     (void)_port->readAll(); // discard response
 
-    // Read firmware version
+    // Read the firmware version, up to its CR: a long one (Elmue, ~200 bytes)
+    // takes several USB packets.
     _port->clear();
     writePort("V\r");
-    // The version line ends in CR, not LF: everything that arrived is the reply.
-    if (_port->waitForReadyRead(50ms))
-        _version = QString::fromLatin1(_port->readAll()).trimmed();
+    QByteArray version;
+    for (int i = 0; i < 10 && !version.contains('\r') && _port->waitForReadyRead(50ms); ++i)
+        version += _port->readAll();
+    version += _port->readAll();
+    _version = QString::fromLatin1(version.left(version.indexOf('\r'))).trimmed();
+
+    // ElmueSoft firmware ("+Board: Multiboard\tMCU: STM32G431\t...") answers every
+    // command but "C", so the probe above took it for a silent CANable.
+    _elmueFirmware = _version.startsWith(QStringLiteral("+Board:"));
+    _elmueClockHz = 0;
+    if (_elmueFirmware)
+    {
+        // "...\tClock: 160\t...\tLimits: 512,256,128,128,32,32,16,16\t..." (MHz;
+        // nominal BRP, Seg1, Seg2, SJW maxima, then the data phase ones)
+        for (const QString &field : _version.split('\t'))
+        {
+            if (field.startsWith(QStringLiteral("Clock: ")))
+                _elmueClockHz = field.mid(7).toUInt() * 1000000u;
+            else if (field.startsWith(QStringLiteral("Limits: ")))
+            {
+                const QStringList values = field.mid(8).split(',');
+                if (values.size() != static_cast<qsizetype>(_elmueLimits.size()))
+                    _elmueClockHz = 0;  // unknown layout: presets only
+                for (int i = 0; i < values.size() && i < static_cast<int>(_elmueLimits.size()); ++i)
+                    _elmueLimits[static_cast<size_t>(i)] = values[i].toUInt();
+            }
+        }
+        if (std::find(_elmueLimits.cbegin(), _elmueLimits.cend(), 0u) != _elmueLimits.cend())
+            _elmueClockHz = 0;
+    }
+    if (isElmue())
+    {
+        _noConfirm = false;
+        _version = _version.mid(1).replace('\t', QStringLiteral(", "));
+    }
 
     configureBitrate();
     if (_fdSupport)
@@ -343,8 +458,17 @@ void SLCANInterface::open()
         log_warning(tr("SLCAN: %1 cannot run listen only, the channel opens in normal mode "
                        "and acknowledges frames").arg(_name));
     }
-    writePort(_settings.isListenOnlyMode() ? "M1\r" : "M0\r");
-    writePort("O\r");
+    sendConfig(_settings.isListenOnlyMode() ? "M1\r" : "M0\r");
+    if (!sendConfig("O\r"))
+    {
+        // Only a confirming device can say so; it did not open the channel.
+        log_error(tr("SLCAN: %1 did not open the CAN channel").arg(_name));
+        _port->close();
+        _port.reset();
+        _isOpen = false;
+        _isOffline = true;
+        return;
+    }
 
     // Discard any immediate responses from opening
     if (_port->waitForReadyRead(10ms))

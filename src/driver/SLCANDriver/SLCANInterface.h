@@ -41,6 +41,7 @@
 
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <memory>
 
@@ -64,6 +65,7 @@ public:
     {
         CANable,
         WeActStudio,
+        Elmue,  // CANable 2.5 Slcan firmware by ElmueSoft (any board, CANable 2 USB ID)
     };
 
     // `transportFactory` makes the port each open() talks to: a real serial
@@ -109,6 +111,15 @@ private:
 
     void writePort(const char *cmd);
     void writePort(const QByteArray &data);
+    // A setup command. A confirming device answers it with CR (done) or BEL
+    // (refused); false and a warning if it refused or did not answer.
+    bool sendConfig(const QByteArray &cmd);
+    // ElmueSoft firmware, known from the USB strings or the "V" reply
+    [[nodiscard]] bool isElmue() const;
+    // Elmue: "s"/"y" for the configured bitrate and sample point, from the
+    // clock and limits its "V" reply gave. Empty if they are unknown or the
+    // bitrate cannot be made; the "S"/"Y" presets are used then.
+    [[nodiscard]] QByteArray elmueTimingCommand(bool data) const;
     void configureBitrate();
     void configureFdBitrate();
     void drainTxQueue(QList<BusMessage> &msglist);
@@ -140,6 +151,12 @@ private:
     std::atomic<bool> _isOffline{false};
     // True when device does not echo CR/BEL confirmations for TX frames
     std::atomic<bool> _noConfirm{false};
+    // "V" answered like the ElmueSoft firmware (also where the USB strings
+    // that SLCANDriver uses are not available, e.g. Windows)
+    std::atomic<bool> _elmueFirmware{false};
+    // From Elmue's "V" reply: CAN clock and nominal / data timing limits
+    uint32_t _elmueClockHz{0};
+    std::array<uint32_t, 8> _elmueLimits{};
 
     std::atomic<uint32_t> _state{state_bus_off};
     std::atomic<uint64_t> _rxCount{0};

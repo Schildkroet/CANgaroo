@@ -29,6 +29,7 @@
 #include <QtTest>
 
 #include "core/BusMessage.h"
+#include "driver/SLCANDriver/SlcanBitTiming.h"
 #include "driver/SLCANDriver/SlcanFrameCodec.h"
 
 class SlcanCodecTest : public QObject
@@ -36,6 +37,10 @@ class SlcanCodecTest : public QObject
     Q_OBJECT
 
 private slots:
+    void bitTimingMatchesElmuePresets_data();
+    void bitTimingMatchesElmuePresets();
+    void bitTimingAtCommonSamplePoint();
+    void bitTimingRejectsImpossible();
     void decodesStandardDataFrame();
     void decodesExtendedDataFrame();
     void decodesRemoteFrames();
@@ -357,6 +362,89 @@ void SlcanCodecTest::hexNibbleEncoding()
     QCOMPARE(slcan::fromHexNibble('g'), -1);
     QCOMPARE(slcan::fromHexNibble(' '), -1);
     QCOMPARE(slcan::fromHexNibble('\0'), -1);
+}
+
+// ── Bit timing (SlcanBitTiming.h) ─────────────────────────────────────────
+//
+// Expected values are the ElmueSoft firmware's own presets for STM32G4 at a
+// 160 MHz CAN clock (Firmware/Slcan/control.c, CAN_NOM_BITTIMING_* and
+// CAN_DATA_BITTIMING_*), all at 75 %: the calculation must find the same
+// bitrate and sample point, with a prescaler no larger than the preset's.
+
+namespace
+{
+const slcan::TimingLimits k_g4Nominal{.brpMax = 512, .seg1Max = 256, .seg2Max = 128, .sjwMax = 128};
+const slcan::TimingLimits k_g4Data{.brpMax = 32, .seg1Max = 32, .seg2Max = 16, .sjwMax = 16};
+} // namespace
+
+void SlcanCodecTest::bitTimingMatchesElmuePresets_data()
+{
+    QTest::addColumn<bool>("data");
+    QTest::addColumn<uint>("bitrate");
+    QTest::addColumn<uint>("brp");
+    QTest::addColumn<uint>("seg1");
+    QTest::addColumn<uint>("seg2");
+
+    QTest::newRow("5k")    << false << 5000u    << 100u << 239u << 80u;
+    QTest::newRow("10k")   << false << 10000u   << 50u  << 239u << 80u;
+    QTest::newRow("20k")   << false << 20000u   << 25u  << 239u << 80u;
+    QTest::newRow("33.3k") << false << 33333u   << 15u  << 239u << 80u;
+    QTest::newRow("50k")   << false << 50000u   << 10u  << 239u << 80u;
+    QTest::newRow("62.5k") << false << 62500u   << 8u   << 239u << 80u;
+    QTest::newRow("83.3k") << false << 83333u   << 6u   << 239u << 80u;
+    QTest::newRow("100k")  << false << 100000u  << 5u   << 239u << 80u;
+    QTest::newRow("125k")  << false << 125000u  << 4u   << 239u << 80u;
+    QTest::newRow("250k")  << false << 250000u  << 2u   << 239u << 80u;
+    QTest::newRow("500k")  << false << 500000u  << 1u   << 239u << 80u;
+    QTest::newRow("800k")  << false << 800000u  << 1u   << 149u << 50u;
+    QTest::newRow("1M")    << false << 1000000u << 1u   << 119u << 40u;
+    QTest::newRow("d500k") << true  << 500000u  << 8u   << 29u  << 10u;
+    QTest::newRow("d1M")   << true  << 1000000u << 4u   << 29u  << 10u;
+    QTest::newRow("d2M")   << true  << 2000000u << 2u   << 29u  << 10u;
+    QTest::newRow("d4M")   << true  << 4000000u << 2u   << 14u  << 5u;
+    QTest::newRow("d5M")   << true  << 5000000u << 2u   << 11u  << 4u;
+}
+
+void SlcanCodecTest::bitTimingMatchesElmuePresets()
+{
+    QFETCH(bool, data);
+    QFETCH(uint, bitrate);
+    QFETCH(uint, brp);
+    QFETCH(uint, seg1);
+    QFETCH(uint, seg2);
+
+    const slcan::BitTiming preset{.brp = brp, .seg1 = seg1, .seg2 = seg2};
+    const auto t = slcan::calcBitTiming(160000000, bitrate, 750, data ? k_g4Data : k_g4Nominal);
+    QVERIFY(t);
+    QCOMPARE(qRound(t->bitrate(160000000)), qRound(preset.bitrate(160000000)));
+    QCOMPARE(t->samplePointPermille(), preset.samplePointPermille());
+    QVERIFY(t->brp <= preset.brp);
+    QVERIFY(t->sjw >= 1 && t->sjw <= t->seg2);
+}
+
+// 500k at 87.5 %: what made BRS frames work on a real CANable 2.0 with this
+// firmware ("s2,139,20,..."); 1 + 279 + 40 would exceed Seg1's 256.
+void SlcanCodecTest::bitTimingAtCommonSamplePoint()
+{
+    const auto t = slcan::calcBitTiming(160000000, 500000, 875, k_g4Nominal);
+    QVERIFY(t);
+    QCOMPARE(t->brp, 2u);
+    QCOMPARE(t->seg1, 139u);
+    QCOMPARE(t->seg2, 20u);
+    QCOMPARE(t->samplePointPermille(), 875u);
+
+    const auto d = slcan::calcBitTiming(160000000, 2000000, 800, k_g4Data);
+    QVERIFY(d);
+    QCOMPARE(qRound(d->bitrate(160000000)), 2000000);
+    QCOMPARE(d->samplePointPermille(), 800u);
+}
+
+void SlcanCodecTest::bitTimingRejectsImpossible()
+{
+    QVERIFY(!slcan::calcBitTiming(160000000, 0, 875, k_g4Nominal));
+    QVERIFY(!slcan::calcBitTiming(160000000, 500000, 1000, k_g4Nominal));
+    QVERIFY(!slcan::calcBitTiming(160000000, 100000000, 875, k_g4Nominal));  // fewer than 3 quanta
+    QVERIFY(!slcan::calcBitTiming(160000000, 1000, 875, k_g4Nominal));       // needs BRP > 512
 }
 
 QTEST_APPLESS_MAIN(SlcanCodecTest)

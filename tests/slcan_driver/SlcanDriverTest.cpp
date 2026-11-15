@@ -19,8 +19,8 @@
 
 */
 
-// SLCANInterface driven end to end against simulated CANable 1, CANable 2
-// and WeAct Studio adapters (FakeSlcanDevice). What a device does with a
+// SLCANInterface driven end to end against simulated CANable 1, CANable 2,
+// WeAct Studio and ElmueSoft CANable 2.5 adapters (FakeSlcanDevice). What a device does with a
 // command comes from its firmware sources (see FakeSlcanDevice.h).
 
 #include <QSet>
@@ -48,24 +48,36 @@ const char *fwName(Fw fw)
     case Fw::CANable1: return "CANable 1";
     case Fw::CANable2: return "CANable 2";
     case Fw::WeAct:    return "WeAct";
+    case Fw::Elmue:    return "Elmue";
     }
     return "?";
 }
+
+const QList<Fw> k_allFirmwares = {Fw::CANable1, Fw::CANable2, Fw::WeAct, Fw::Elmue};
 
 bool hasFd(Fw fw)
 {
     return fw != Fw::CANable1;
 }
 
-// A device and the interface talking to it, as SLCANDriver pairs them by USB ID
+SLCANInterface::Manufacturer manufacturerOf(Fw fw)
+{
+    switch (fw)
+    {
+    case Fw::WeAct: return SLCANInterface::Manufacturer::WeActStudio;
+    case Fw::Elmue: return SLCANInterface::Manufacturer::Elmue;
+    default:        return SLCANInterface::Manufacturer::CANable;
+    }
+}
+
+// A device and the interface talking to it, as SLCANDriver pairs them by USB
+// ID and strings. `as` overrides the manufacturer the driver was told.
 struct Rig
 {
-    explicit Rig(Fw fw)
+    explicit Rig(Fw fw) : Rig(fw, manufacturerOf(fw)) {}
+    Rig(Fw fw, SLCANInterface::Manufacturer as)
         : dev(fw)
-        , intf(nullptr, 0, QStringLiteral("fake0"), hasFd(fw),
-               fw == Fw::WeAct ? SLCANInterface::Manufacturer::WeActStudio
-                               : SLCANInterface::Manufacturer::CANable,
-               dev.factory())
+        , intf(nullptr, 0, QStringLiteral("fake0"), hasFd(fw), as, dev.factory())
     {
     }
 
@@ -158,7 +170,7 @@ QByteArray payload(const BusMessage &msg)
     return QByteArray(reinterpret_cast<const char *>(msg.getData()), msg.getLength());
 }
 
-void addFirmwareRows(QList<Fw> fws = {Fw::CANable1, Fw::CANable2, Fw::WeAct})
+void addFirmwareRows(QList<Fw> fws = k_allFirmwares)
 {
     QTest::addColumn<Fw>("fw");
     for (Fw fw : std::as_const(fws))
@@ -197,6 +209,10 @@ private slots:
     void transmitsFrames_data();
     void transmitsFrames();
     void weActReportsFailedTransmission();
+    void elmueRefusesTxInListenOnly();
+    void elmueUsesConfiguredSamplePoints();
+    void elmueRecognisedFromVersionReply();
+    void refusedSetupCommandIsLogged();
     void weActConfirmsBurstInOrder();
     void rxIsNotHeldBackByTx_data() { addFirmwareRows(); }
     void rxIsNotHeldBackByTx();
@@ -240,6 +256,12 @@ void SlcanDriverTest::readsFirmwareVersion()
     case Fw::CANable1: QVERIFY(version.startsWith("9fddea4 ")); break;
     case Fw::CANable2: QVERIFY(version.startsWith("b158aa7 ")); break;
     case Fw::WeAct:    QVERIFY(version.startsWith("WeAct Studio")); break;
+    case Fw::Elmue:
+        // ~200 bytes over several USB packets: all of it, tabs made readable
+        QVERIFY(version.startsWith("Board: Multiboard, MCU: STM32G431, "));
+        QVERIFY(version.contains("Slcan: 105"));
+        QVERIFY(version.endsWith("Serial: 206E38A550565008"));
+        break;
     }
     QVERIFY(!version.contains('\r'));
 }
@@ -265,7 +287,7 @@ void SlcanDriverTest::offeredBitratesAreWhatTheDeviceRuns_data()
     QTest::addColumn<Fw>("fw");
     QTest::addColumn<unsigned>("bitrate");
 
-    for (Fw fw : {Fw::CANable1, Fw::CANable2, Fw::WeAct})
+    for (Fw fw : k_allFirmwares)
     {
         Rig rig(fw);
         QSet<unsigned> seen;
@@ -290,7 +312,9 @@ void SlcanDriverTest::offeredBitratesAreWhatTheDeviceRuns()
     rig.open(mi);
 
     // "S7" is 750k on CANable, 800k on WeAct; CANable 1 has no "S9" (83.3k).
-    QCOMPARE(rig.dev.nominalBitrate(), bitrate);
+    // Elmue's 160 MHz clock cannot make every rate exactly (75k -> 75012).
+    QVERIFY2(qAbs(int64_t(rig.dev.nominalBitrate()) - int64_t(bitrate)) <= bitrate / 1000,
+             qPrintable(QString::number(rig.dev.nominalBitrate())));
     QVERIFY(rig.dev.rejected().isEmpty());
 }
 
@@ -299,7 +323,7 @@ void SlcanDriverTest::offeredDataBitratesAreWhatTheDeviceRuns_data()
     QTest::addColumn<Fw>("fw");
     QTest::addColumn<unsigned>("fdBitrate");
 
-    for (Fw fw : {Fw::CANable2, Fw::WeAct})
+    for (Fw fw : {Fw::CANable2, Fw::WeAct, Fw::Elmue})
     {
         Rig rig(fw);
         QSet<unsigned> seen;
@@ -359,7 +383,7 @@ void SlcanDriverTest::listenOnlyKeepsDeviceSilent()
     QFETCH(Fw, fw);
     Rig rig(fw);
     const bool offered = rig.intf.getCapabilities() & BusInterface::capability_listen_only;
-    QCOMPARE(offered, fw == Fw::WeAct);
+    QCOMPARE(offered, fw == Fw::WeAct || fw == Fw::Elmue);
 
     MeasurementInterface mi = rig.config();
     mi.setListenOnlyMode(true);
@@ -427,7 +451,7 @@ void SlcanDriverTest::receivesFrames_data()
     QTest::addColumn<Fw>("fw");
     QTest::addColumn<int>("caseIndex");
 
-    for (Fw fw : {Fw::CANable1, Fw::CANable2, Fw::WeAct})
+    for (Fw fw : k_allFirmwares)
     {
         for (int i = 0; i < frameCases().size(); ++i)
         {
@@ -539,6 +563,79 @@ void SlcanDriverTest::weActConfirmsBurstInOrder()
         QVERIFY(!msgs[i].isRX());
     }
     QCOMPARE(rig.intf.getNumTxErrors(), 0);
+}
+
+// Elmue answers a frame in bus monitoring mode with BEL (FBK_NoTxInSilentMode):
+// it must count as failed, not show up as sent.
+void SlcanDriverTest::elmueRefusesTxInListenOnly()
+{
+    Rig rig(Fw::Elmue);
+    MeasurementInterface mi = rig.config();
+    mi.setListenOnlyMode(true);
+    rig.open(mi);
+    QVERIFY(rig.dev.silent());
+
+    rig.intf.sendMessage(toMessage(Frame{.id = 0x123, .dlc = 1, .data = QByteArray(1, '\x01')}));
+    const QList<BusMessage> msgs = rig.pump();
+
+    QVERIFY(msgs.isEmpty());
+    QVERIFY(rig.dev.transmitted().isEmpty());
+    QCOMPARE(rig.intf.getNumTxErrors(), 1);
+    QCOMPARE(rig.intf.getNumTxFrames(), 0);
+}
+
+// Elmue's "S"/"Y" presets all sample at 75 %. On a bus at 87.5 % that breaks
+// BRS frames (seen on hardware), so the driver sets the timing itself.
+void SlcanDriverTest::elmueUsesConfiguredSamplePoints()
+{
+    Rig rig(Fw::Elmue);
+    MeasurementInterface mi = rig.config();
+    mi.setSamplePoint(875);
+    mi.setFdSamplePoint(750);
+    rig.open(mi);
+
+    QVERIFY(rig.dev.rejected().isEmpty());
+    QCOMPARE(rig.dev.nominalBitrate(), 500000u);
+    QCOMPARE(rig.dev.samplePoint(false), 875u);
+    QCOMPARE(rig.dev.dataBitrate(), 2000000u);
+    QCOMPARE(rig.dev.samplePoint(true), 750u);
+}
+
+// Where SLCANDriver cannot read the USB strings (Windows), an Elmue board is
+// created as a CANable 2; its "V" reply must switch the interface over.
+void SlcanDriverTest::elmueRecognisedFromVersionReply()
+{
+    Rig rig(Fw::Elmue, SLCANInterface::Manufacturer::CANable);
+    QVERIFY(!(rig.intf.getCapabilities() & BusInterface::capability_listen_only));
+
+    MeasurementInterface mi = rig.config();
+    mi.setListenOnlyMode(true);  // a setup saved while listen only was offered
+    rig.open(mi);
+    QVERIFY(rig.intf.isOpen());
+    QVERIFY(rig.intf.getCapabilities() & BusInterface::capability_listen_only);
+    QVERIFY(rig.dev.silent());
+    QVERIFY(logcapture::warnings().isEmpty());  // no "cannot run listen only"
+
+    // Confirmations are used: the refused frame is a TX error, not a sent frame.
+    rig.intf.sendMessage(toMessage(Frame{.id = 0x7FF, .dlc = 0}));
+    const QList<BusMessage> msgs = rig.pump();
+    QVERIFY(msgs.isEmpty());
+    QCOMPARE(rig.intf.getNumTxErrors(), 1);
+}
+
+// A confirming device that refuses a setup command must not do so silently.
+void SlcanDriverTest::refusedSetupCommandIsLogged()
+{
+    Rig rig(Fw::WeAct);
+    MeasurementInterface mi = rig.config();
+    mi.setCustomBitrateEn(true);
+    mi.setCustomBitrate(0x010101);  // seg1 < 2: can_set_bitrate3() refuses it
+    rig.open(mi);
+
+    QCOMPARE(rig.dev.rejected().size(), 1);
+    QCOMPARE(logcapture::warnings().size(), 1);
+    QVERIFY(logcapture::warnings().first().contains("S010101"));
+    QVERIFY(rig.intf.isOpen());  // the channel itself opened
 }
 
 // A frame that arrives while the driver writes must not wait for the next one.

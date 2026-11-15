@@ -28,6 +28,9 @@
 //   CANable2  github.com/normaldotcom/canable2-fw  b158aa7  src/slcan.c, can.c, usbd_cdc_if.c
 //   WeAct     github.com/WeActStudio/WeActStudio.USB2CANFDV1.SLCAN_Firmware  d57f8c4
 //             Source/App/slcan.c, Source/Bsp/can.c, Source/USB_Device/App/usbd_cdc_if.c
+//   Elmue     github.com/Elmue/CANable-2.5-firmware-Slcan-and-Candlelight  12aa9fa
+//             (Slcan 105, firmware 26.10.01, G431 Multiboard build)
+//             Firmware/Slcan/control.c, buffer.c, Firmware/can.c
 //
 // Never adjust this to what the driver expects (see issue #34). Where the
 // firmware's behaviour depends on the CAN hardware rather than on code, the
@@ -44,6 +47,13 @@
 //   - CANable reports data bytes for remote frames, WeAct does not. Their
 //     content is undefined (on a CANable 2.0: stale RX FIFO element bytes that
 //     vary between runs); the fake reports zeros.
+//   - Elmue (CANable 2.5) answers every command with CR / BEL except "C", which
+//     never answers. A frame gets CR once queued, BEL if the channel is closed,
+//     silent (M1 really is bus monitoring) or bus-off. Same USB ID as CANable 2.
+//     "S"/"Y" use the firmware's G431 timing table (all at 75 %); "s"/"y" set
+//     prescaler and segments directly. Its advanced modes (M with F/D/E/M/S/I/R,
+//     F/f, L, "*" commands) are not modelled: cangaroo does not send them, and
+//     the fake refuses them.
 //   - CANable keeps its command buffer between lines: an empty line runs the
 //     previous command again ("FIXME: Pressing enter repeats the previous TX").
 //     On WeAct an empty line instead spoils the next command (BEL).
@@ -62,7 +72,7 @@
 class FakeSlcanDevice final : public FakeSerialDevice
 {
 public:
-    enum class Firmware { CANable1, CANable2, WeAct };
+    enum class Firmware { CANable1, CANable2, WeAct, Elmue };
 
     struct Frame
     {
@@ -73,6 +83,15 @@ public:
         bool brs{false};
         uint8_t dlc{0};   // DLC code (0-8, FD 0-F)
         QByteArray data;  // payload, empty for a remote frame
+    };
+
+    // Elmue: FDCAN prescaler and segments (can_bitrate_cfg)
+    struct ElmueTiming
+    {
+        uint32_t brp{0};
+        uint32_t seg1{0};
+        uint32_t seg2{0};
+        uint32_t sjw{0};
     };
 
     // WeAct custom timing: "Sddxxyy" / "Yddxxyy" ("Sxxyy" means div 2)
@@ -105,6 +124,9 @@ public:
     [[nodiscard]] std::optional<CustomTiming> customNominal() const { return _customNominal; }
     [[nodiscard]] uint32_t dataBitrate() const;
     [[nodiscard]] std::optional<CustomTiming> customData() const { return _customData; }
+    // Elmue: the timing in use and its sample point in permille (0: not set)
+    [[nodiscard]] std::optional<ElmueTiming> elmueTiming(bool data) const { return data ? _elmueData : _elmueNominal; }
+    [[nodiscard]] uint32_t samplePoint(bool data) const;
     // Mode the controller runs in now (bus monitoring); only meaningful on bus
     [[nodiscard]] bool silent() const { return _onBus && _silentActive; }
     [[nodiscard]] bool enhancedMode() const { return _enhanced; }
@@ -123,6 +145,11 @@ protected:
 private:
     void canableInput(char ch);  // cdc_process
     void weactInput(char ch);    // usbrxTask
+    void elmueInput(char ch);    // buf_process
+    // control_parse_str: CR for success, BEL for an error, nothing for "C"/"V"
+    void parseElmue(const QByteArray &line);
+    int elmueFrame(const QByteArray &line);
+    bool elmueSetTiming(bool data, const ElmueTiming &t);  // can_set_bit_timing
     int parseCanable(int len);
     int parseWeAct(const QByteArray &line);
     // Frame command of either dialect; -1 on a malformed line. `digits` holds
@@ -139,6 +166,8 @@ private:
     int _dataIndex{2};     // CAN_DATA_BITRATE_2M
     std::optional<CustomTiming> _customNominal;
     std::optional<CustomTiming> _customData;
+    std::optional<ElmueTiming> _elmueNominal;  // empty: "baudrate not set"
+    std::optional<ElmueTiming> _elmueData;
     bool _silentRequested{false};
     bool _silentActive{false};
     bool _enhanced{false};

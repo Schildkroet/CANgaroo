@@ -21,7 +21,9 @@
 
 #include "FakeSlcanDevice.h"
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 
 namespace
 {
@@ -42,9 +44,32 @@ constexpr std::array<uint32_t, 9> k_canable1Prescaler = {600, 300, 120, 60, 48, 
 // CANable 2, can_set_bitrate(): 170 MHz, 1 + 14 + 2 time quanta. Index order
 // is enum can_bitrate: ..., 750K (prescaler 7, "VERY INACCURATE"), 1000K, 83.3K.
 constexpr std::array<uint32_t, 10> k_canable2Prescaler = {1000, 500, 200, 100, 80, 40, 20, 7, 10, 120};
-// WeAct, enum can_bitrate and the protocol table in the WeAct README
+// WeAct, enum can_bitrate and the protocol table in the WeAct README. Elmue
+// uses the same letters (Slcan/control.h, CAN_NOM_BAUDRATE_*).
 constexpr std::array<uint32_t, 14> k_weactBitrate = {10000, 20000, 50000, 100000, 125000, 250000, 500000,
                                                      800000, 1000000, 83333, 75000, 62500, 33333, 5000};
+
+// Elmue, Slcan/control.c for STM32G4 (160 MHz CAN clock): {BRP, Seg1, Seg2}
+// per "S" letter (CAN_NOM_BITTIMING_*, indexed like k_weactBitrate) and per
+// "Y" digit (CAN_DATA_BITTIMING_*). SJW: control_set_baudrate().
+constexpr uint32_t k_elmueClock = 160000000;
+constexpr std::array<std::array<uint32_t, 3>, 14> k_elmueNominal = {{
+    {50, 239, 80}, {25, 239, 80}, {10, 239, 80}, {5, 239, 80}, {4, 239, 80}, {2, 239, 80}, {1, 239, 80},
+    {1, 149, 50}, {1, 119, 40}, {6, 239, 80}, {9, 176, 60}, {8, 239, 80}, {15, 239, 80}, {100, 239, 80},
+}};
+constexpr std::array<uint32_t, 3> elmueData(char y)
+{
+    switch (y)
+    {
+    case '0': return {8, 29, 10};
+    case '1': return {4, 29, 10};
+    case '2': return {2, 29, 10};
+    case '4': return {2, 14, 5};
+    case '5': return {2, 11, 4};
+    case '8': return {2, 4, 5};
+    default:  return {0, 0, 0};
+    }
+}
 
 uint32_t canable2Rate(uint32_t prescaler)
 {
@@ -82,6 +107,17 @@ bool toDigits(const QByteArray &line, bool strict, QByteArray &digits)
 }
 
 // Digit at `i`; 0 past the buffer
+int hexValue(char c)
+{
+    if (c >= '0' && c <= '9')
+        return c - '0';
+    if (c >= 'A' && c <= 'F')
+        return c - 'A' + 10;
+    if (c >= 'a' && c <= 'f')
+        return c - 'a' + 10;
+    return -1;
+}
+
 uint8_t digit(const QByteArray &digits, int i)
 {
     return i < digits.size() ? static_cast<uint8_t>(digits.at(i)) : 0;
@@ -99,9 +135,10 @@ void appendHex(QByteArray &out, uint32_t value, int digits)
 
 FakeSlcanDevice::FakeSlcanDevice(Firmware fw)
     : _fw(fw)
-    // SLCAN_MTU: canable-fw 30, canable2-fw 138 + 1 + 16
-    , _slcanStr(fw == Firmware::CANable1 ? 30 : 155, '\0')
+    // SLCAN_MTU: canable-fw 30, canable2-fw 138 + 1 + 16, Elmue 1 + 138 + 8 + 1 + 1 + 16
+    , _slcanStr(fw == Firmware::CANable1 ? 30 : (fw == Firmware::Elmue ? 165 : 155), '\0')
 {
+
 }
 
 uint32_t FakeSlcanDevice::nominalBitrate() const
@@ -114,8 +151,22 @@ uint32_t FakeSlcanDevice::nominalBitrate() const
         return canable2Rate(k_canable2Prescaler.at(_nominalIndex));
     case Firmware::WeAct:
         return _customNominal ? 0 : k_weactBitrate.at(_nominalIndex);
+    case Firmware::Elmue:
+        if (!_elmueNominal)
+            return 0;
+        return static_cast<uint32_t>(std::lround(double(k_elmueClock) /
+                                                 (_elmueNominal->brp * (1.0 + _elmueNominal->seg1 + _elmueNominal->seg2))));
     }
     return 0;
+}
+
+uint32_t FakeSlcanDevice::samplePoint(bool data) const
+{
+    const std::optional<ElmueTiming> &t = data ? _elmueData : _elmueNominal;
+    if (_fw != Firmware::Elmue || !t)
+        return 0;
+    const uint32_t quanta = 1 + t->seg1 + t->seg2;
+    return ((1 + t->seg1) * 1000 + quanta / 2) / quanta;
 }
 
 uint32_t FakeSlcanDevice::dataBitrate() const
@@ -129,6 +180,11 @@ uint32_t FakeSlcanDevice::dataBitrate() const
         return canable2Rate(_dataIndex == 5 ? 2 : 5);
     case Firmware::WeAct:
         return _customData ? 0 : static_cast<uint32_t>(_dataIndex) * 1000000u;
+    case Firmware::Elmue:
+        if (!_elmueData)
+            return 0;
+        return static_cast<uint32_t>(std::lround(double(k_elmueClock) /
+                                                 (_elmueData->brp * (1.0 + _elmueData->seg1 + _elmueData->seg2))));
     }
     return 0;
 }
@@ -150,6 +206,8 @@ void FakeSlcanDevice::leaveRunning(const Frame &frame, bool enhancedMode)
     _silentActive = false;
     _enhanced = enhancedMode && _fw == Firmware::WeAct;
     _chatter = frame;
+    if (_fw == Firmware::Elmue && !_elmueNominal)
+        _elmueNominal = ElmueTiming{1, 239, 80, 79};  // an open channel has a bitrate: S6
 }
 
 void FakeSlcanDevice::hostWrite(const QByteArray &data)
@@ -167,6 +225,8 @@ void FakeSlcanDevice::runMainLoop()
     {
         if (_fw == Firmware::WeAct)
             weactInput(ch);
+        else if (_fw == Firmware::Elmue)
+            elmueInput(ch);
         else
             canableInput(ch);
     }
@@ -230,6 +290,232 @@ void FakeSlcanDevice::weactInput(char ch)
     {
         _output += k_cr;
     }
+}
+
+// buf_process: like CANable, but control_parse_command() terminates the line,
+// so nothing of the previous one is reused; an empty line is a success.
+void FakeSlcanDevice::elmueInput(char ch)
+{
+    if (ch == k_cr)
+    {
+        const QByteArray line = _slcanStr.left(_strIndex);
+        _strIndex = 0;
+        _commands.append(line);
+        parseElmue(line);
+        return;
+    }
+    if (_strIndex >= _slcanStr.size())
+        _strIndex = 0;  // APP_UsbInOverflow
+    _slcanStr[_strIndex++] = ch;
+}
+
+void FakeSlcanDevice::parseElmue(const QByteArray &line)
+{
+    const auto fail = [&] {
+        _rejected.append(line);
+        _output += k_bell;
+    };
+    const auto ok = [&] { _output += k_cr; };
+    const int len = static_cast<int>(line.size());
+
+    if (len == 0)
+        return ok();
+
+    const char cmd = line.at(0);
+    switch (cmd)
+    {
+    case 'A':
+        if (len != 2 || _onBus || (line.at(1) != '0' && line.at(1) != '1'))
+            return fail();
+        return ok();
+    case 'M':
+    {
+        if (len < 2)
+            return fail();
+        for (int i = 1; i < len; ++i)
+        {
+            const char m = line.at(i);
+            if ((m == '0' || m == '1') && !_onBus)
+                _silentRequested = m == '1';  // FDCAN_MODE_BUS_MONITORING for the next Open
+            else
+                return fail();  // open, or a mode the fake does not model
+        }
+        return ok();
+    }
+    case 'O':
+        if (len > 2)
+            return fail();
+        if (len == 2)
+        {
+            if (line.at(1) == 'N')
+                _silentRequested = false;
+            else if (line.at(1) == 'S')
+                _silentRequested = true;
+            else
+                return fail();  // loopback modes not modelled
+        }
+        // can_open(): not twice, and not without a nominal baudrate
+        if (_onBus || !_elmueNominal)
+            return fail();
+        _onBus = true;
+        _silentActive = _silentRequested;
+        return ok();
+    case 'C':
+        if (len != 1)
+            return fail();
+        if (_onBus)
+        {
+            // can_close() -> can_reset(): bitrates are forgotten
+            _onBus = false;
+            _elmueNominal.reset();
+            _elmueData.reset();
+        }
+        _silentRequested = false;  // CanMode = NORMAL
+        return;                    // never answers
+    case 'V':
+        if (len != 1)
+            return fail();
+        // Board, MCU, DevID, clock, limits, HAL and serial as a CANable 2.0 nano
+        // (G431 Multiboard build) reports them; Firmware and Slcan from settings.h.
+        _output += QByteArrayLiteral(
+            "+Board: Multiboard\tMCU: STM32G431\tDevID: 1128\tFirmware: 2494465\tSlcan: 105"
+            "\tClock: 160\tChannels: 1\tQuartz: No\tLimits: 512,256,128,128,32,32,16,16"
+            "\tHAL: 1.2.5\tSerial: 206E38A550565008\r");
+        return;
+    case 'S':
+    case 'Y':
+    {
+        if (len != 2)
+            return fail();
+        const char b = line.at(1);
+        std::array<uint32_t, 3> t{0, 0, 0};
+        if (cmd == 'S')
+        {
+            if (b >= '0' && b <= '9')
+                t = k_elmueNominal.at(b - '0');
+            else if (b >= 'A' && b <= 'D')
+                t = k_elmueNominal.at(b - 'A' + 10);
+        }
+        else
+        {
+            t = elmueData(b);
+        }
+        if (t[0] == 0)
+            return fail();  // undefined letter
+        // control_set_baudrate(): SJW = min(seg1, seg2, max) - 1
+        uint32_t sjw = std::min({t[1], t[2], cmd == 'S' ? 128u : 16u});
+        if (sjw > 1)
+            --sjw;
+        return elmueSetTiming(cmd == 'Y', ElmueTiming{t[0], t[1], t[2], sjw}) ? ok() : fail();
+    }
+    case 's':
+    case 'y':
+    {
+        // "sBRP,Seg1,Seg2,Sjw": utils_parse_next_decimal, separators ',' then end
+        const QList<QByteArray> parts = line.mid(1).split(',');
+        if (parts.size() != 4)
+            return fail();
+        uint32_t v[4];
+        for (int i = 0; i < 4; ++i)
+        {
+            bool okDigits = !parts[i].isEmpty();
+            for (char c : parts[i])
+                okDigits = okDigits && c >= '0' && c <= '9';
+            if (!okDigits)
+                return fail();
+            v[i] = parts[i].toUInt();
+        }
+        return elmueSetTiming(cmd == 'y', ElmueTiming{v[0], v[1], v[2], v[3]}) ? ok() : fail();
+    }
+    case 't':
+    case 'T':
+    case 'r':
+    case 'R':
+    case 'd':
+    case 'D':
+    case 'b':
+    case 'B':
+        return elmueFrame(line) == k_ok ? ok() : fail();
+    default:
+        return fail();  // FBK_InvalidCommand, or an advanced command not modelled
+    }
+}
+
+// can_set_bit_timing(): only while closed, within the HAL's IS_FDCAN_* ranges,
+// and not above MAX_CAN_BAUDRATE (10 MBaud)
+bool FakeSlcanDevice::elmueSetTiming(bool data, const ElmueTiming &t)
+{
+    if (_onBus)
+        return false;
+    const bool inRange = data
+        ? (t.brp >= 1 && t.brp <= 32 && t.seg1 >= 1 && t.seg1 <= 32 && t.seg2 >= 1 && t.seg2 <= 16 && t.sjw >= 1 && t.sjw <= 16)
+        : (t.brp >= 1 && t.brp <= 512 && t.seg1 >= 1 && t.seg1 <= 256 && t.seg2 >= 1 && t.seg2 <= 128 && t.sjw >= 1 && t.sjw <= 128);
+    if (!inRange)
+        return false;
+    if (double(k_elmueClock) / (t.brp * (1.0 + t.seg1 + t.seg2)) > 10e6)
+        return false;
+    (data ? _elmueData : _elmueNominal) = t;
+    return true;
+}
+
+// Transmit part of control_parse_str and buf_store_tx_packet
+int FakeSlcanDevice::elmueFrame(const QByteArray &line)
+{
+    const char type = line.at(0);
+    Frame frame;
+    frame.extended = type >= 'A' && type <= 'Z';
+    const char lower = static_cast<char>(frame.extended ? type + 32 : type);
+    frame.rtr = lower == 'r';
+    frame.fd = lower == 'd' || lower == 'b';
+    frame.brs = lower == 'b';
+
+    // Sending with FDF needs a data baudrate (FBK_BaudrateNotSet)
+    if (frame.fd && !_elmueData)
+        return k_error;
+
+    // utils_parse_hex_value: exactly n hex digits
+    int pos = 1;
+    const auto hex = [&](int digits, uint32_t &value) {
+        value = 0;
+        for (int i = 0; i < digits; ++i, ++pos)
+        {
+            const int n = pos < line.size() ? hexValue(line.at(pos)) : -1;
+            if (n < 0)
+                return false;
+            value = (value << 4) | static_cast<uint32_t>(n);
+        }
+        return true;
+    };
+
+    uint32_t value = 0;
+    if (!hex(frame.extended ? 8 : 3, value) || value > (frame.extended ? 0x1FFFFFFFu : 0x7FFu))
+        return k_error;
+    frame.id = value;
+    if (!hex(1, value) || (!frame.fd && value > 8))
+        return k_error;
+    frame.dlc = static_cast<uint8_t>(value);
+
+    if (!frame.rtr)
+    {
+        // "for (i = 0; i < byte_count && parse_loc < len; i++)": short is accepted
+        const int bytes = k_dlcToBytes.at(frame.dlc);
+        for (int i = 0; i < bytes && pos < line.size(); ++i)
+        {
+            if (!hex(2, value))
+                return k_error;
+            frame.data.append(static_cast<char>(value));
+        }
+        frame.data = frame.data.leftJustified(bytes, '\0');
+    }
+    if (pos != line.size())
+        return k_error;  // trailing characters
+
+    // can_is_tx_allowed(): open, not bus monitoring
+    if (!_onBus || _silentActive)
+        return k_error;
+
+    _txQueue.append(frame);
+    return k_ok;  // CR now: queued, not yet sent
 }
 
 int FakeSlcanDevice::parseCanable(int len)
@@ -481,7 +767,7 @@ void FakeSlcanDevice::transmitQueued()
 
         if (_fw != Firmware::WeAct)
         {
-            _transmitted.append(frame);  // CANable reports nothing either way
+            _transmitted.append(frame);  // CANable / Elmue report nothing more
             continue;
         }
 
@@ -517,8 +803,8 @@ QByteArray FakeSlcanDevice::rxLine(const Frame &frame) const
     if (frame.rtr)
     {
         // CANable copies the (unwritten) data area of a remote frame too, with
-        // undefined content; WeAct leaves it out since V1.0.0.6.
-        if (_fw != Firmware::WeAct)
+        // undefined content; WeAct (since V1.0.0.6) and Elmue leave it out.
+        if (_fw == Firmware::CANable1 || _fw == Firmware::CANable2)
             for (int i = 0; i < bytes; ++i)
                 appendHex(line, 0, 2);
     }

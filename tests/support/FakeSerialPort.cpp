@@ -64,10 +64,12 @@ bool FakeSerialPort::usable() const
 
 bool FakeSerialPort::receive()
 {
+    constexpr int k_usbPacket = 64;  // full-speed bulk endpoint size
+
     if (_dev._output.isEmpty())
         return false;
-    _buffer += _dev._output;
-    _dev._output.clear();
+    _buffer += _dev._output.left(k_usbPacket);
+    _dev._output.remove(0, k_usbPacket);
     return true;
 }
 

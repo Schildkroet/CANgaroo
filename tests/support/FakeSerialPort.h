@@ -33,6 +33,9 @@
 // A driver that waits before looking at bytesAvailable() can therefore leave
 // data in the buffer that it never reads.
 //
+// Each wait moves at most one full-speed USB packet (64 bytes) into the buffer,
+// so a reply longer than that needs several waits, as on a slow host.
+//
 // The device's firmware main loop runs only inside waitForReadyRead(), the one
 // place where the host gives the device time. Commands written back to back
 // without such a wait reach the device together, as one USB transfer would.
@@ -92,7 +95,7 @@ public:
 
 private:
     [[nodiscard]] bool usable() const;
-    // Moves what the device sent into the buffer; true if there was anything.
+    // Moves the next USB packet the device sent into the buffer; true if there was one.
     bool receive();
 
     FakeSerialDevice &_dev;

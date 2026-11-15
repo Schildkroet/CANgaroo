@@ -8,7 +8,7 @@ cd tests/hw_compare && qmake6 && make
 B=../../build/tests/slcan_hw_compare
 $B probe /dev/ttyACM0 > real.txt; $B probe fake:canable2 > fake.txt; diff real.txt fake.txt
 $B driver /dev/ttyACM0 canable2; $B driver fake:canable2
-$B bus /dev/ttyACM0 can0      # a SocketCAN channel on the same bus, 500k / 2M FD
+$B bus /dev/ttyACM0 can0 [elmue]  # a SocketCAN channel on the same bus, 500k / 2M FD
 ```
 
 `probe` sends the same command scripts to both and prints every reply byte.
@@ -42,3 +42,26 @@ arm-gnu-toolchain 13.2, flashed over DFU. Bus partner: one gs_usb FD channel
 Not covered: bitrates other than 500k / 2M (changing the SocketCAN side needs
 root), bus errors, CANable 1 and WeAct firmwares (other MCUs: STM32F042,
 STM32G0B1).
+
+## Results: ElmueSoft CANable 2.5 Slcan
+
+Same board, Elmue's Slcan firmware built from
+github.com/Elmue/CANable-2.5-firmware-Slcan-and-Candlelight 12aa9fa
+(`Build/Make_G431_Slcan_Multiboard`, Slcan 105, firmware 26.10.01).
+
+| Checked | Result |
+|---|---|
+| 42 probe scripts (incl. open without bitrate, `Y3`, `S7`, `Y8`, silent TX, FD without data rate, short / long / out-of-range frame commands) | identical to `fake:elmue` |
+| `V` | ~200 bytes over several USB packets; read in full now (was cut after the first packet) |
+| `SLCANInterface` open / TX / close | identical, incl. confirm mode (Elmue's `C` never answers, so the probe alone would say "no confirm") |
+| RX and TX of all frame types on the wire | identical, after the sample point fix below |
+| Listen only | `M1` works; a frame then gets BEL: TX error, nothing on the wire, as in the fake |
+| Open under full bus load | 20/20 correct |
+
+Found on the wire: BRS frames sent by Elmue failed (`can0` RX errors up to
+128) with the `S6` preset, which samples at 75 % against the bus's 87.5 %.
+With `s2,139,20,…` (87.5 %) they went through ("Perfect match: Yes" in Elmue's
+debug output). The driver now sets Elmue's timing with `s`/`y` from the
+configured bitrate and sample point (`SlcanBitTiming.h`), using the clock and
+limits from the `V` reply.
+
