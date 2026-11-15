@@ -90,5 +90,8 @@ private:
     bool parseSectionCm(CanDb &candb, DbcTokenList &tokens);
     bool parseSectionVal(CanDb &candb, DbcTokenList &tokens);
     void parseSectionBa(CanDb &candb, DbcTokenList &tokens);
+    void parseSectionBaDefDef(CanDb &candb, DbcTokenList &tokens);
+
+    bool _protocolTypeExplicit = false; // a BA_ "ProtocolType" line was seen in the current file
 
 };

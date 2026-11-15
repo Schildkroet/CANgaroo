@@ -370,6 +370,7 @@ bool DbcParser::parse(CanDb &candb, DbcTokenList &tokens)
     _dbcVersion.clear();
     _nsEntries.clear();
     _buEntries.clear();
+    _protocolTypeExplicit = false;
 
     while (!tokens.isEmpty()) {
         if (!parseSection(candb, tokens)) {
@@ -410,6 +411,8 @@ bool DbcParser::parseSection(CanDb &candb, DbcTokenList &tokens) {
                 retval &= parseSectionVal(candb, tokens);
             } else if (sectionName == "BA_") {
                 parseSectionBa(candb, tokens);
+            } else if (sectionName == "BA_DEF_DEF_") {
+                parseSectionBaDefDef(candb, tokens);
             } else {
                 skipUntilSectionEnding(tokens);
             }
@@ -694,7 +697,24 @@ void DbcParser::parseSectionBa(CanDb &candb, DbcParser::DbcTokenList &tokens)
     // is skipped. Never fails, so an unusual BA_ line cannot reject the file.
     QString name;
     QString value;
-    if (expectString(tokens, &name) && (name == "ProtocolType") && expectString(tokens, &value)) {
+    if (expectString(tokens, &name) && (name == "ProtocolType") && expectString(tokens, &value))
+    {
+        // An explicit value always beats the BA_DEF_DEF_ default, in either order.
+        _protocolTypeExplicit = true;
+        candb.setJ1939(value.compare("J1939", Qt::CaseInsensitive) == 0);
+    }
+    skipUntilSectionEnding(tokens);
+}
+
+void DbcParser::parseSectionBaDefDef(CanDb &candb, DbcParser::DbcTokenList &tokens)
+{
+    // Tools leave the BA_ line out when the value equals the attribute's
+    // default, so the default alone can mark a J1939 database.
+    QString name;
+    QString value;
+    if (expectString(tokens, &name) && (name == "ProtocolType") && expectString(tokens, &value) &&
+        !_protocolTypeExplicit)
+    {
         candb.setJ1939(value.compare("J1939", Qt::CaseInsensitive) == 0);
     }
     skipUntilSectionEnding(tokens);

@@ -103,11 +103,13 @@ QList<CanTiming> UlcInterface::getAvailableBitrates()
 void UlcInterface::applyConfig(const MeasurementInterface &mi)
 {
     _settings = mi;
+    _activeBaud = mi.linBaudRate();
 }
 
 unsigned UlcInterface::getBitrate()
 {
-    return _settings.linBaudRate();
+    // The rate the device runs at, which open() may have had to fall back from.
+    return _activeBaud.load(std::memory_order_relaxed);
 }
 
 uint32_t UlcInterface::getCapabilities()
@@ -199,7 +201,7 @@ QList<QByteArray> UlcInterface::masterTableCommands(const LinDb &ldb, int tableI
     // next one. So each row gets the delay of the slot before it (the table
     // wraps). Firmware before 3.4 starts that wait only once the previous frame
     // has ended, so there the previous frame's own time is taken off.
-    const unsigned baud = _settings.linBaudRate();
+    const unsigned baud = _activeBaud.load(std::memory_order_relaxed);
     const bool waitFromFrameEnd = _fwVersionCode < ulc::k_fwSlotDelayFromFrameStart;
 
     QList<QByteArray> cmds;
@@ -400,6 +402,8 @@ void UlcInterface::open()
         baud = 19200;
         (void)transact(ulc::encodeBaudRate(baud));
     }
+    // Slot timing and the reported bitrate follow the rate actually in use.
+    _activeBaud = baud;
 
     const bool classic = _settings.linChecksumClassic() ||
                          _settings.linProtocolVersion() == LinProtocolVersion::V1_3;
@@ -418,6 +422,11 @@ void UlcInterface::open()
     const bool hasLdf = loadLdf(ldb);
     const bool listenOnly = _settings.linListenOnly() ||
                             _settings.linNodeMode() == LinNodeMode::Monitor;
+
+    // Only the explicit listen-only option promises a bus that is never driven;
+    // a monitor without it still sends frames on request (see sendMessage()).
+    _txBlocked = _settings.linListenOnly();
+    _txBlockedWarned = false;
 
     _mode = Mode::Monitor;
     if (!listenOnly && hasLdf)
@@ -535,6 +544,15 @@ void UlcInterface::sendMessage(const BusMessage &msg)
 
     const uint8_t id  = static_cast<uint8_t>(msg.getId() & ulc::k_maxLinId);
     const uint8_t len = std::min<uint8_t>(msg.getLength(), ulc::k_maxDataLen);
+
+    if (_txBlocked.load(std::memory_order_relaxed))
+    {
+        // Listen only: a one-shot frame would put a master header on the bus.
+        _txDropped.fetch_add(1, std::memory_order_relaxed);
+        if (!_txBlockedWarned.exchange(true))
+            log_warning(tr("uLC: %1 is listen only, frames are not sent").arg(_name));
+        return;
+    }
 
     QMutexLocker lock(&_txMutex);
 
@@ -752,6 +770,21 @@ void UlcInterface::handleLine(QList<BusMessage> &msglist)
 }
 
 
+// An unplugged adapter leaves the QSerialPort open and only reports an error
+// (ResourceError on Linux, others elsewhere), so isOpen() alone misses it.
+bool UlcInterface::checkPortLost()
+{
+    const QSerialPort::SerialPortError err = _port->error();
+    if (_port->isOpen() && (err == QSerialPort::NoError || err == QSerialPort::TimeoutError))
+        return false;
+
+    log_error(tr("uLC: connection to %1 lost (%2)").arg(_name, _port->errorString()));
+    _isOffline = true;
+    _isOpen    = false;
+    _state     = state_bus_off;
+    return true;
+}
+
 // ── Main read/write loop ──────────────────────────────────────────────────────
 
 bool UlcInterface::readMessage(QList<BusMessage> &msglist, unsigned int timeout_ms)
@@ -771,7 +804,11 @@ bool UlcInterface::readMessage(QList<BusMessage> &msglist, unsigned int timeout_
     // Block until data arrives (or timeout) instead of busy-spinning. Bytes
     // already buffered (e.g. read during waitForBytesWritten()) count as arrived.
     if (_port->bytesAvailable() == 0 && !_port->waitForReadyRead(static_cast<int>(timeout_ms)))
+    {
+        // A plain timeout is the idle case; anything else means the port is gone.
+        checkPortLost();
         return !msglist.isEmpty();
+    }
 
     const QByteArray incoming = _port->readAll();
 
@@ -797,14 +834,8 @@ bool UlcInterface::readMessage(QList<BusMessage> &msglist, unsigned int timeout_
         }
     }
 
-    // Handle a disconnected device (port closed underneath us)
-    if (!_port->isOpen())
-    {
-        _isOffline = true;
-        _isOpen    = false;
-        _state     = state_bus_off;
+    if (checkPortLost())
         return !msglist.isEmpty();
-    }
 
     // A reply may have freed the device for the next queued command.
     drainTxQueue();

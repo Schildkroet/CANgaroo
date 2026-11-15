@@ -120,6 +120,7 @@ private:
     QString _workspaceFileName;
     QString _baseWindowTitle;
     bool _hasConfirmedSetup = false;
+    bool _setupFromWorkspace = false; // setup was read from a workspace file, keep it as stored
 
     Backend &backend();
 

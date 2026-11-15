@@ -28,6 +28,7 @@
 #include <QtTest>
 
 #include "core/BusMessage.h"
+#include "core/MeasurementInterface.h"
 #include "core/MeasurementNetwork.h"
 #include "core/MeasurementSetup.h"
 #include "db/dbc/DbcParser.h"
@@ -107,6 +108,7 @@ private slots:
 
     void plainDatabaseDoesNotMatchByPgn();
     void j1939FlagIsPerDatabase();
+    void j1939MatchStaysInsideItsNetwork();
     void pgnCacheFollowsDatabaseReload();
     void clearDropsPgnMatches();
 };
@@ -348,6 +350,41 @@ BO_ 2364539905 Plain: 8 ECU_A
     QVERIFY(_setup.findDbMessage(extendedFrame(0x18F00422u)) != nullptr);
     QCOMPARE(_setup.findDbMessage(extendedFrame(0x0CF00401u))->getName(), QString("Plain"));
     QCOMPARE(_setup.findDbMessage(extendedFrame(0x18F00422u))->getName(), QString("EEC1"));
+}
+
+// A J1939 database decodes by PGN only on the interfaces of its own network.
+// Extended frames of another network's interface are proprietary traffic as far
+// as that database is concerned; a frame of an interface in no network (e.g. a
+// loaded trace) may still match.
+void MeasurementSetupTest::j1939MatchStaysInsideItsNetwork()
+{
+    constexpr BusInterfaceId k_j1939Bus = 1;
+    constexpr BusInterfaceId k_otherBus = 2;
+    constexpr BusInterfaceId k_unassigned = 3;
+
+    auto addInterface = [](MeasurementNetwork *network, BusInterfaceId id)
+    {
+        auto *mi = new MeasurementInterface();
+        mi->setBusInterface(id);
+        network->addInterface(mi);
+    };
+    auto frameOn = [](BusInterfaceId id, uint32_t canId)
+    {
+        BusMessage msg = extendedFrame(canId);
+        msg.setInterfaceId(id);
+        return msg;
+    };
+
+    MeasurementNetwork *j1939Network = _setup.createNetwork();
+    addInterface(j1939Network, k_j1939Bus);
+    j1939Network->addCanDb(load(k_j1939Dbc));
+    addInterface(_setup.createNetwork(), k_otherBus);
+    _setup.rebuildMessageCache();
+
+    // 0x18F00422: EEC1 (PGN 0xF004) from another source address
+    QVERIFY(_setup.findDbMessage(frameOn(k_j1939Bus, 0x18F00422u)) != nullptr);
+    QVERIFY(_setup.findDbMessage(frameOn(k_otherBus, 0x18F00422u)) == nullptr);
+    QVERIFY(_setup.findDbMessage(frameOn(k_unassigned, 0x18F00422u)) != nullptr);
 }
 
 void MeasurementSetupTest::pgnCacheFollowsDatabaseReload()

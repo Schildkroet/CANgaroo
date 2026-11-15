@@ -174,6 +174,12 @@ QString SocketCanInterface::buildIpRouteCmd(const MeasurementInterface &mi)
 // flushPendingConfig() so the privilege prompt (pkexec) appears once per
 // measurement start instead of once per ip command.
 static QStringList s_pendingConfig;
+
+// Outcome markers the configuration script prints, see applyConfig().
+static constexpr const char *k_markNoRestart             = "no-restart";
+static constexpr const char *k_markNoListenOnly          = "no-listen-only";
+static constexpr const char *k_markNoRestartNoListenOnly = "no-restart,no-listen-only";
+static constexpr const char *k_markFailed                = "failed";
 static QMutex s_pendingConfigMutex;
 
 static QString shellQuote(const QString &s)
@@ -228,8 +234,12 @@ void SocketCanInterface::applyConfig(const MeasurementInterface &mi)
             quoted << shellQuote(a);
         return shellQuote(ipExe) + " " + quoted.join(' ');
     };
-    const QString fail = QString("echo %1 >&2; rc=1")
-                             .arg(shellQuote(QString("%1: ip link configuration failed").arg(getName())));
+    // Reported on stdout as "<interface> <marker>" when a fallback was needed;
+    // flushPendingConfig() turns the marker into a warning.
+    auto report = [&](const char *marker)
+    {
+        return "echo " + shellQuote(getName() + " " + marker);
+    };
 
     // Always state the listen-only mode explicitly: ctrl-mode flags persist in
     // the kernel, so a previously enabled listen-only would otherwise stay on.
@@ -243,24 +253,24 @@ void SocketCanInterface::applyConfig(const MeasurementInterface &mi)
     //  - "listen-only off" is refused by drivers without that ctrl-mode
     //  - "listen-only on" never falls back to normal mode: the user asked for a
     //    bus that is not driven, so the interface stays down rather than ACKing
+    //
+    // The script is one line of fixed shape with every argument single-quoted:
+    // packaging/10-cangaroo-socketcan.rules matches it as a whole to skip the
+    // password prompt. Change the two together.
     const QString lo = mi.isListenOnlyMode() ? "on" : "off";
-    QStringList attempts;
-    attempts << cmd(upArgs(restartMs, lo));
+    QString script = cmd({"link", "set", getName(), "down"}) + "; ";
+    script += "if " + cmd(upArgs(restartMs, lo)) + "; then :; ";
     if (restartMs != "0")
-        attempts << cmd(upArgs("0", lo));
+        script += "elif " + cmd(upArgs("0", lo)) + "; then " + report(k_markNoRestart) + "; ";
     if (!mi.isListenOnlyMode())
     {
-        attempts << cmd(upArgs(restartMs, ""));
+        script += "elif " + cmd(upArgs(restartMs, "")) + "; then " + report(k_markNoListenOnly) + "; ";
         if (restartMs != "0")
-            attempts << cmd(upArgs("0", ""));
+            script += "elif " + cmd(upArgs("0", "")) + "; then " + report(k_markNoRestartNoListenOnly) + "; ";
     }
+    script += "else " + report(k_markFailed) + "; rc=1; fi; ";
 
-    QString script;
-    script += cmd({"link", "set", getName(), "down"}) + "\n";
-    script += attempts.join(" || ") + " || { " + fail + "; }\n";
-
-    const QStringList fullArgs = upArgs(restartMs, lo);
-    log_info(ipExe + " " + fullArgs.join(" "));
+    log_info(QString("requesting: %1 %2").arg(ipExe, upArgs(restartMs, lo).join(" ")));
     QMutexLocker lock(&s_pendingConfigMutex);
     s_pendingConfig << script;
 }
@@ -275,17 +285,17 @@ void SocketCanInterface::flushPendingConfig()
     if (scripts.isEmpty())
         return;
 
-    const QString script = "rc=0\n" + scripts.join("") + "exit $rc\n";
+    const QString script = "rc=0; " + scripts.join("") + "exit $rc";
 
     QProcess proc;
     if (geteuid() != 0)
     {
         log_info("Not running as root — using pkexec for ip link commands");
-        proc.start("pkexec", QStringList{"sh", "-c", script});
+        proc.start("pkexec", QStringList{"/bin/sh", "-c", script});
     }
     else
     {
-        proc.start("sh", QStringList{"-c", script});
+        proc.start("/bin/sh", QStringList{"-c", script});
     }
 
     // The user may take a while to type the password.
@@ -295,9 +305,47 @@ void SocketCanInterface::flushPendingConfig()
         proc.kill();
         return;
     }
+
+    // What ip printed for every attempt that failed, including those a
+    // fallback made up for.
+    const QString errors = QString::fromLocal8Bit(proc.readAllStandardError()).trimmed();
+
+    const QStringList lines = QString::fromLocal8Bit(proc.readAllStandardOutput()).split('\n', Qt::SkipEmptyParts);
+    for (const QString &line : lines)
+    {
+        const QString name = line.section(' ', 0, 0);
+        const QString marker = line.section(' ', 1);
+        if (marker == k_markNoRestart)
+            log_warning(QString("%1: driver refused restart-ms, automatic restart after bus-off is NOT active").arg(name));
+        else if (marker == k_markNoListenOnly)
+            log_warning(QString("%1: driver has no listen-only control mode, option left out").arg(name));
+        else if (marker == k_markNoRestartNoListenOnly)
+            log_warning(QString("%1: driver refused restart-ms and has no listen-only control mode; "
+                                "automatic restart after bus-off is NOT active").arg(name));
+        else if (marker == k_markFailed)
+            log_error(QString("%1: ip link configuration failed, interface left down").arg(name));
+    }
+
     if (proc.exitStatus() != QProcess::NormalExit || proc.exitCode() != 0)
     {
-        log_error(QString("ip configuration failed: ") + QString(proc.readAllStandardError()).trimmed());
+        log_error(QString("ip configuration failed (exit code %1): %2").arg(proc.exitCode()).arg(errors));
+    }
+    else if (!errors.isEmpty())
+    {
+        log_info(QString("ip output of the refused attempts: %1").arg(errors));
+    }
+}
+
+std::optional<bool> SocketCanInterface::isListenOnlyActive()
+{
+    switch (_listenOnlyActive.load(std::memory_order_relaxed))
+    {
+    case 0:
+        return false;
+    case 1:
+        return true;
+    default:
+        return std::nullopt;
     }
 }
 
@@ -652,6 +700,14 @@ const char *SocketCanInterface::cname()
 
 void SocketCanInterface::open()
 {
+    // What the kernel actually runs with, not what the setup asked for: the
+    // interface may be configured by the OS, or the privileged configuration
+    // may have been refused. Read here because ctrl-mode is fixed while up.
+    if (readConfig() && _config.supports_timing)
+        _listenOnlyActive = (_config.ctrl_mode & CAN_CTRLMODE_LISTENONLY) != 0 ? 1 : 0;
+    else
+        _listenOnlyActive = -1;
+
     // create socket before modifying shared _fd/_isOpen
     int local_fd = socket(PF_CAN, SOCK_RAW, CAN_RAW);
     if (local_fd < 0)

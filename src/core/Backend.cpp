@@ -110,18 +110,34 @@ bool Backend::startMeasurement()
 
     // Configure every interface first, then let each backend finish deferred
     // work once (SocketCAN runs all ip commands under a single privilege prompt).
-    for (auto *network : _setup.getNetworks()) {
-        for (auto *mi : network->interfaces()) {
-            if (!mi->isEnabled()) { continue; }
+    for (auto *network : _setup.getNetworks())
+    {
+        for (auto *mi : network->interfaces())
+        {
+            if (!mi->isEnabled())
+            {
+                continue;
+            }
             BusInterface *intf = getInterfaceById(mi->busInterface());
-            if (intf) { intf->applyConfig(*mi); }
+            if (intf)
+            {
+                intf->applyConfig(*mi);
+            }
         }
     }
-    for (auto *network : _setup.getNetworks()) {
-        for (auto *mi : network->interfaces()) {
-            if (!mi->isEnabled()) { continue; }
+    for (auto *network : _setup.getNetworks())
+    {
+        for (auto *mi : network->interfaces())
+        {
+            if (!mi->isEnabled())
+            {
+                continue;
+            }
             BusInterface *intf = getInterfaceById(mi->busInterface());
-            if (intf) { intf->flushPendingConfig(); }
+            if (intf)
+            {
+                intf->flushPendingConfig();
+            }
         }
     }
 

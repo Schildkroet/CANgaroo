@@ -1,11 +1,15 @@
 // Allow members of the netdev group to configure SocketCAN interfaces
 // via `ip link set` without a password prompt.
-// CANgaroo invokes ip through pkexec when it needs to bring a CAN
-// interface up or down (requires CAP_NET_ADMIN).
+// CANgaroo brings CAN interfaces down and up (requires CAP_NET_ADMIN) with one
+// `pkexec /bin/sh -c <script>` call per measurement start, so that users
+// without this rule get a single password prompt for all interfaces.
 //
-// Only the exact command lines CANgaroo generates are allowed (see
-// SocketCanInterface::applyConfig). Matching on the program alone would let
-// netdev members run `ip netns exec <ns> <cmd>`, i.e. arbitrary commands as root.
+// Only the exact script CANgaroo generates is allowed (see
+// SocketCanInterface::applyConfig / flushPendingConfig; change them together
+// with this file). The script is matched as a whole, anchored at both ends, and
+// every variable part sits inside single quotes with a character class that
+// excludes quotes, so nothing else can be smuggled in. Matching on the program
+// alone would let netdev members run arbitrary commands as root.
 polkit.addRule(function(action, subject) {
     if (action.id !== "org.freedesktop.policykit.exec" ||
         !subject.isInGroup("netdev"))
@@ -14,10 +18,7 @@ polkit.addRule(function(action, subject) {
     }
 
     var prog = action.lookup("program");
-    if (prog !== "/sbin/ip"      &&
-        prog !== "/bin/ip"       &&
-        prog !== "/usr/sbin/ip"  &&
-        prog !== "/usr/bin/ip")
+    if (prog !== "/bin/sh" && prog !== "/usr/bin/sh")
     {
         return polkit.Result.NOT_HANDLED;
     }
@@ -28,18 +29,31 @@ polkit.addRule(function(action, subject) {
         return polkit.Result.NOT_HANDLED;
     }
 
+    var q = function(s) { return "'" + s + "'"; };
+
+    var ip     = q("(?:/usr)?/s?bin/ip");
     var ifname = "[A-Za-z0-9_.:-]{1,15}";
-    var num    = "[0-9]+";
-    var frac   = "[0-9]+(?:\\.[0-9]+)?";
+    var num    = q("[0-9]+");
+    var frac   = q("[0-9]+\\.[0-9]+");
 
-    var down = new RegExp("^\\S+ link set " + ifname + " down$");
-    var up   = new RegExp("^\\S+ link set " + ifname + " up type can" +
-                          " bitrate " + num +
-                          " sample-point " + frac +
-                          "(?: dbitrate " + num + " dsample-point " + frac + " fd on)?" +
-                          " restart-ms " + num + "$");
+    var down = ip + " 'link' 'set' " + q(ifname) + " 'down'";
+    var up   = ip + " 'link' 'set' " + q(ifname) + " 'up' 'type' 'can'" +
+               " 'bitrate' " + num +
+               " 'sample-point' " + frac +
+               "(?: 'dbitrate' " + num + " 'dsample-point' " + frac + " 'fd' 'on')?" +
+               " 'restart-ms' " + num +
+               "(?: 'listen-only' '(?:on|off)')?";
 
-    if (down.test(cmd) || up.test(cmd))
+    // One interface: down, then the up command with up to three fallbacks.
+    var marker = "(?:no-restart|no-listen-only|no-restart,no-listen-only)";
+    var iface  = down + "; " +
+                 "if " + up + "; then :; " +
+                 "(?:elif " + up + "; then echo " + q(ifname + " " + marker) + "; ){0,3}" +
+                 "else echo " + q(ifname + " failed") + "; rc=1; fi; ";
+
+    var script = new RegExp("^\\S+ -c rc=0; (?:" + iface + ")+exit \\$rc$");
+
+    if (script.test(cmd))
     {
         return polkit.Result.YES;
     }

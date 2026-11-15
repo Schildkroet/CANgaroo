@@ -109,6 +109,8 @@ private:
     QList<QByteArray> slaveTableCommands(const LinDb &ldb, QSet<uint8_t> &published) const;
     QByteArray defaultPayload(uint8_t id, uint8_t len) const;
     void drainTxQueue();
+    // Marks the interface offline if the serial port failed or was unplugged.
+    bool checkPortLost();
     void handleLine(QList<BusMessage> &msglist);
     void handleTxReply(QList<BusMessage> &msglist, bool success);
 
@@ -143,6 +145,9 @@ private:
 
     std::atomic<bool> _isOpen{false};
     std::atomic<bool> _isOffline{false};
+    std::atomic<unsigned> _activeBaud{19200};   // rate the device runs at, see open()
+    std::atomic<bool> _txBlocked{false};        // listen only: sendMessage() drops everything
+    std::atomic<bool> _txBlockedWarned{false};  // warn once per open()
 
     std::atomic<uint32_t> _state{state_stopped};
     std::atomic<uint64_t> _rxCount{0};

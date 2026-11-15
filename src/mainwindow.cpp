@@ -769,6 +769,7 @@ void MainWindow::clearWorkspace()
     _gatewayWindow = nullptr;
 
     _workspaceFileName.clear();
+    _setupFromWorkspace = false;
     setWorkspaceModified(false);
 }
 
@@ -887,6 +888,7 @@ void MainWindow::loadWorkspaceFromFile(const QString &filename)
     QDomElement setupRoot = root.firstChildElement("setup");
     if (loadWorkspaceSetup(setupRoot))
     {
+        _setupFromWorkspace = true;
         _workspaceFileName = filename;
         addToRecentFiles(filename);
     }
@@ -1349,9 +1351,9 @@ bool MainWindow::showSetupDialog()
 
 #if defined(__linux__)
     // Default SocketCAN interfaces to "configured by OS" when not running as root.
-    // Only as the initial default: once the setup was confirmed, the user's own
-    // choice for "configured by OS" must stick.
-    if (geteuid() != 0 && !_hasConfirmedSetup)
+    // Only as the initial default: once the setup was confirmed or came from a
+    // workspace file, the stored choice for "configured by OS" must stick.
+    if (geteuid() != 0 && !_hasConfirmedSetup && !_setupFromWorkspace)
     {
         for (auto *network : new_setup.getNetworks())
         {

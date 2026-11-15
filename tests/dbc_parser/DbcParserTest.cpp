@@ -70,6 +70,7 @@ private slots:
     void parsesExtendedIdentifier();
 
     void protocolTypeFlagsJ1939Database();
+    void protocolTypeDefaultFlagsJ1939Database();
     void otherAttributesAreSkipped();
     void parsesMultiplexer();
     void parsesValueTable();
@@ -247,6 +248,40 @@ BA_ "ProtocolType" "J1939";
 )", j1939));
     QVERIFY(j1939.isJ1939());
     QVERIFY(j1939.getMessageById(2566844926u) != nullptr);
+}
+
+// Tools omit the BA_ line when the value equals the attribute default, so the
+// BA_DEF_DEF_ default alone marks the database. An explicit BA_ value wins,
+// whichever comes first in the file.
+void DbcParserTest::protocolTypeDefaultFlagsJ1939Database()
+{
+    const QString head = R"(BO_ 2566844926 Msg: 8 ECU_A
+ SG_ Sig : 0|8@1+ (1,0) [0|255] "" ECU_B
+
+BA_DEF_ "ProtocolType" STRING ;
+)";
+
+    CanDb byDefault;
+    QVERIFY(parse(head + R"(BA_DEF_DEF_ "ProtocolType" "J1939";
+)", byDefault));
+    QVERIFY(byDefault.isJ1939());
+
+    CanDb overridden;
+    QVERIFY(parse(head + R"(BA_DEF_DEF_ "ProtocolType" "J1939";
+BA_ "ProtocolType" "CAN";
+)", overridden));
+    QVERIFY(!overridden.isJ1939());
+
+    CanDb overriddenFirst;
+    QVERIFY(parse(head + R"(BA_ "ProtocolType" "CAN";
+BA_DEF_DEF_ "ProtocolType" "J1939";
+)", overriddenFirst));
+    QVERIFY(!overriddenFirst.isJ1939());
+
+    CanDb otherDefault;
+    QVERIFY(parse(head + R"(BA_DEF_DEF_ "BusType" "J1939";
+)", otherDefault));
+    QVERIFY(!otherDefault.isJ1939());
 }
 
 void DbcParserTest::otherAttributesAreSkipped()

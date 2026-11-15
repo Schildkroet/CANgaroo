@@ -66,9 +66,9 @@ The binary will be in `bin/cangaroo`.
 
 #### SocketCAN privileges
 
-CANgaroo uses `ip link` to configure SocketCAN interfaces (bitrate, sample point, CAN FD), which requires `CAP_NET_ADMIN`. When not running as root it calls `ip` through `pkexec` (polkit); it does not use `sudo`, so sudoers rules have no effect.
+CANgaroo uses `ip link` to configure SocketCAN interfaces (bitrate, sample point, CAN FD), which requires `CAP_NET_ADMIN`. When not running as root it runs them through `pkexec` (polkit), all interfaces in one call so there is at most one prompt per measurement start; it does not use `sudo`, so sudoers rules have no effect.
 
-The `.deb` package installs a polkit rule that lets members of the `netdev` group run exactly the `ip link set <if> down` / `up type can ...` commands CANgaroo generates, without a password prompt. Add yourself to the group:
+The `.deb` package installs a polkit rule that lets members of the `netdev` group run exactly the `ip link set <if> down` / `up type can ...` script CANgaroo generates, without a password prompt. The rule and the application must come from the same version. Add yourself to the group:
 
 ```bash
 sudo usermod -aG netdev $USER

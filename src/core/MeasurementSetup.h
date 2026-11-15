@@ -25,7 +25,10 @@
 #include <QObject>
 #include <QList>
 #include <QHash>
+#include <QSet>
 #include <QDomDocument>
+
+#include "driver/CanDriver.h"
 
 class Backend;
 class MeasurementNetwork;
@@ -73,6 +76,15 @@ signals:
 private:
     QList<MeasurementNetwork*> _networks;
     mutable QHash<uint32_t, CanDbMessage*> _messageCache;
-    mutable QHash<uint32_t, CanDbMessage*> _pgnCache; // J1939 databases, extended messages only
+    // J1939 databases, extended messages only. Per network (keyed by interface
+    // and PGN) for frames of an assigned interface, across all networks otherwise.
+    mutable QHash<uint32_t, CanDbMessage*> _pgnCache;
+    mutable QHash<quint64, CanDbMessage*> _networkPgnCache;
+    mutable QSet<BusInterfaceId> _assignedInterfaces;
+
+    [[nodiscard]] static constexpr quint64 networkPgnKey(BusInterfaceId intf, uint32_t pgn) noexcept
+    {
+        return (static_cast<quint64>(intf) << 32) | pgn;
+    }
     mutable QHash<uint8_t,  LinFrame*>     _linFrameCache;
 };

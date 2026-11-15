@@ -228,16 +228,30 @@ void CanStatusWindow::update()
         QString stateText = intf->getStateText();
         if (intf->getState() == BusInterface::state_ok && intf->busType() == BusType::CAN)
         {
-            // "ready" alone would suggest a normal bus participant
-            for (MeasurementNetwork *network : backend().getSetup().getNetworks())
+            // "ready" alone would suggest a normal bus participant. Prefer what
+            // the driver reads back from the hardware: the setup flag is only
+            // what was asked for (SocketCAN "configured by OS" never applies it).
+            bool listenOnly = false;
+            if (const auto active = intf->isListenOnlyActive())
             {
-                for (MeasurementInterface *mi : network->interfaces())
+                listenOnly = *active;
+            }
+            else
+            {
+                for (MeasurementNetwork *network : backend().getSetup().getNetworks())
                 {
-                    if (mi->isEnabled() && mi->busInterface() == intf->getId() && mi->isListenOnlyMode())
+                    for (MeasurementInterface *mi : network->interfaces())
                     {
-                        stateText = tr("ready (listen only)");
+                        if (mi->isEnabled() && mi->busInterface() == intf->getId() && mi->isListenOnlyMode())
+                        {
+                            listenOnly = true;
+                        }
                     }
                 }
+            }
+            if (listenOnly)
+            {
+                stateText = tr("ready (listen only)");
             }
         }
         row.node->setText(column_value, stateText);

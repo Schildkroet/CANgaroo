@@ -83,6 +83,7 @@ public:
 
     void applyConfig(const MeasurementInterface &mi) override;
     void flushPendingConfig() override;
+    [[nodiscard]] std::optional<bool> isListenOnlyActive() override;
     virtual bool readConfig();
     virtual bool readConfigFromLink(struct rtnl_link *link);
 
@@ -129,6 +130,7 @@ private:
     QString _name;
 
     can_config_t _config;
+    std::atomic<int> _listenOnlyActive{-1}; // kernel ctrl-mode read on open(): 0 off, 1 on, -1 unknown
     can_status_t _status;
     can_status_snapshot_t _offset_stats;
     ts_mode_t _ts_mode;
