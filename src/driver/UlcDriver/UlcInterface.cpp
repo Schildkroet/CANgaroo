@@ -157,7 +157,7 @@ QByteArray UlcInterface::defaultPayload(uint8_t id, uint8_t len) const
 }
 
 QList<QByteArray> UlcInterface::masterTableCommands(const LinDb &ldb, int tableIndex,
-                                                    QSet<uint8_t> &published) const
+                                                    PublishedSlots &published) const
 {
     struct Slot
     {
@@ -231,12 +231,12 @@ QList<QByteArray> UlcInterface::masterTableCommands(const LinDb &ldb, int tableI
 
         cmds.append(cmd);
         if (le.isMasterPublisher)
-            published.insert(le.frameId);
+            published.insert(le.frameId, SlotTiming{.delayMs = delayMs, .timeoutMs = timeoutMs});
     }
     return cmds;
 }
 
-QList<QByteArray> UlcInterface::slaveTableCommands(const LinDb &ldb, QSet<uint8_t> &published) const
+QList<QByteArray> UlcInterface::slaveTableCommands(const LinDb &ldb, PublishedSlots &published) const
 {
     // The firmware slave only reacts to IDs in its table: frames this node
     // publishes go in as publisher rows (it answers them), the master's frames
@@ -279,7 +279,7 @@ QList<QByteArray> UlcInterface::slaveTableCommands(const LinDb &ldb, QSet<uint8_
                     cmd = ulc::encodeFrame(le.frameId,
                                            reinterpret_cast<const uint8_t *>(payload.constData()),
                                            le.dlc);
-                    published.insert(le.frameId);
+                    published.insert(le.frameId, std::nullopt);
                 }
                 else
                 {
@@ -441,7 +441,7 @@ void UlcInterface::open()
                      .arg(_settings.linNodeMode() == LinNodeMode::Slave ? "slave" : "master", _name));
     }
 
-    QSet<uint8_t> published;
+    PublishedSlots published;
     QList<QByteArray> slotCmds;
     QByteArray openCmd = ulc::k_cmdOpenMonitor;
 
@@ -484,7 +484,7 @@ void UlcInterface::open()
     {
         QMutexLocker lock(&_txMutex);
         _txQueue.clear();
-        _publishedIds = published;
+        _publishedSlots = published;
     }
 
     _rxCount   = 0;
@@ -571,7 +571,8 @@ void UlcInterface::sendMessage(const BusMessage &msg)
         return;
     }
 
-    if (!_publishedIds.contains(id))
+    const auto slot = _publishedSlots.constFind(id);
+    if (slot == _publishedSlots.cend())
     {
         _txErrors.fetch_add(1, std::memory_order_relaxed);
         log_warning(tr("uLC: LIN ID 0x%1 is not published by this node in the running schedule, data not updated")
@@ -583,7 +584,12 @@ void UlcInterface::sendMessage(const BusMessage &msg)
     // Only after the last queued schedule command, though: a table switch
     // reloads the slot with the data known when it was queued, so an update in
     // front of it would be overwritten again by older data.
-    TxEntry update{ulc::encodeFrame(id, msg.getData(), len), TxKind::PayloadUpdate, msg};
+    // A master slot goes out in its timed form, so the firmware keeps the
+    // slot's delay and timeout instead of resetting them (addLinMasterRow).
+    const QByteArray cmd = slot->has_value()
+        ? ulc::encodeScheduleSlot(id, len, true, msg.getData(), (*slot)->delayMs, (*slot)->timeoutMs)
+        : ulc::encodeFrame(id, msg.getData(), len);
+    TxEntry update{cmd, TxKind::PayloadUpdate, msg};
     auto waiting = _txQueue.end();
     for (auto it = _txQueue.end(); it != _txQueue.begin();)
     {
@@ -618,7 +624,7 @@ void UlcInterface::setLinScheduleTable(uint8_t tableIndex)
         return;
     }
 
-    QSet<uint8_t> published;
+    PublishedSlots published;
     const QList<QByteArray> slotCmds = masterTableCommands(ldb, tableIndex, published);
 
     // The firmware has one table: clear it, load the new slots, restart.
@@ -627,7 +633,7 @@ void UlcInterface::setLinScheduleTable(uint8_t tableIndex)
     for (const QByteArray &cmd : slotCmds)
         _txQueue.append(TxEntry{cmd, TxKind::Control, BusMessage()});
     _txQueue.append(TxEntry{ulc::k_cmdStartSchedule, TxKind::Control, BusMessage()});
-    _publishedIds = published;
+    _publishedSlots = published;
 }
 
 // Called from readMessage -- sends the next queued command (no mutex held while writing).

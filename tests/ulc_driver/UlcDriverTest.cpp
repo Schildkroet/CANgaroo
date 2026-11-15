@@ -401,13 +401,10 @@ void UlcDriverTest::masterPayloadUpdateKeepsSlotTiming()
     const auto after = _dev->row(0x10);
     QVERIFY(after);
     // addLinMasterRow resets offset_ms to 15 and the response timeout to its
-    // default for the untimed "t" command, which is what sendMessage() sends
-    // for a payload update. The slot then no longer follows the LDF schedule.
-    // Fix: send the update as a timed "T" slot with the delay and timeout the
-    // slot was uploaded with (keep them per published ID in UlcInterface).
-    QEXPECT_FAIL("", "payload update resets the slot to the firmware's default timing", Continue);
+    // default for the untimed "t" command, so an update must use the timed form.
     QCOMPARE(after->offsetMs, before->offsetMs);
     QCOMPARE(after->responseWaitMs, before->responseWaitMs);
+    QCOMPARE(after->data, bytes({0xAA, 0xBB, 0xCC, 0xDD}));
 }
 
 void UlcDriverTest::masterRejectsUpdateForSubscribedFrame()

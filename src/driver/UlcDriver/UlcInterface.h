@@ -93,6 +93,17 @@ private:
         Control,        // schedule commands queued by setLinScheduleTable()
     };
 
+    // Timing a master slot was uploaded with. A payload update must repeat
+    // it: the untimed "t" form resets the row to the firmware's defaults.
+    struct SlotTiming
+    {
+        uint8_t delayMs{0};
+        uint8_t timeoutMs{0};
+    };
+    // IDs this node publishes in the running table; master slots carry their
+    // timing, slave rows have none (only the master scheduler uses it).
+    using PublishedSlots = QMap<uint8_t, std::optional<SlotTiming>>;
+
     struct TxEntry
     {
         QByteArray cmd;
@@ -106,10 +117,10 @@ private:
     std::optional<QByteArray> transact(const QByteArray &cmd, int timeout_ms = 200);
     bool loadLdf(LinDb &ldb) const;
     // Slot commands for one LDF schedule table / for the selected slave node,
-    // in upload order. `published` receives the IDs this node transmits.
+    // in upload order. `published` receives the slots this node transmits.
     QList<QByteArray> masterTableCommands(const LinDb &ldb, int tableIndex,
-                                          QSet<uint8_t> &published) const;
-    QList<QByteArray> slaveTableCommands(const LinDb &ldb, QSet<uint8_t> &published) const;
+                                          PublishedSlots &published) const;
+    QList<QByteArray> slaveTableCommands(const LinDb &ldb, PublishedSlots &published) const;
     QByteArray defaultPayload(uint8_t id, uint8_t len) const;
     void drainTxQueue();
     // Marks the interface offline if the serial port failed or was unplugged.
@@ -132,7 +143,7 @@ private:
     // these may be updated by sendMessage(): for any other ID the firmware
     // would turn a subscriber row into a publisher or append a new slot.
     // Guarded by _txMutex: setLinScheduleTable() changes it from the GUI thread.
-    QSet<uint8_t> _publishedIds;
+    PublishedSlots _publishedSlots;
     // Last payload sent per published ID, reused when the schedule is reloaded (_txMutex)
     QMap<uint8_t, QByteArray> _sentPayloads;
 
