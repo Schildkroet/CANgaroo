@@ -191,7 +191,9 @@ int64_t LindeSharedDevice::deviceTimestampToHostMs(uint32_t ts_ms)
     QMutexLocker lock(&timestampMutex);
     if (!timestampValid)
         return QDateTime::currentMSecsSinceEpoch();
-    const int64_t delta = static_cast<int64_t>(ts_ms) - static_cast<int64_t>(deviceTicksStart_ms);
+    // HAL_GetTick() wraps after 49.7 days: take the difference modulo 2^32,
+    // signed so frames stamped just before the epoch stay slightly earlier.
+    const int64_t delta = static_cast<int32_t>(ts_ms - deviceTicksStart_ms);
     return hostOffsetStart_ms + delta;
 }
 

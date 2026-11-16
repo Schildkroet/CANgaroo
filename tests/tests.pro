@@ -22,4 +22,5 @@ SUBDIRS += \
     slcan_driver \
     candle_driver \
     canblaster_driver \
+    lindeapi_driver \
     measurement_setup

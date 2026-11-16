@@ -15,6 +15,11 @@ $B bus /dev/ttyACM0 can0 [elmue]  # a SocketCAN channel on the same bus, 500k / 
 $B candle-probe 206E38A5505650082
 $B candle-bus   206E38A5505650082 can0
 $B candle-leave 206E38A5505650082   # leave channel 0 running at 250 kbit/s
+
+# lin_usb (LindeAPI driver) through libusb, first device with the LIN interface
+$B linusb-probe    # control requests + set data, real vs. FakeLinUsbDevice (CANILFD config)
+$B linusb-engine   # a 2-slot master schedule on the real adapter, frames as reported
+$B linusb-driver   # LindeApiInterface on the real adapter: open, run, set data, close
 ```
 
 `probe` sends the same command scripts to both and prints every reply byte.
@@ -88,3 +93,37 @@ with the device at the wrong bitrate, frames were shown as sent that never
 reached the bus. That is the firmware's protocol (Elmue's comment calls the echo
 "useless"), not something the driver can see.
 
+
+## Results: lin_usb, CANILFD (LindeAPI driver)
+
+CANILFD CAN+LIN+AIO adapter (Hermelin Labs, `1d50:606f`, bcdDevice 1.03), LIN
+interface 1 (EP 0x83 / 0x04), firmware 0.1.0, HW 2. Nothing else on the LIN
+bus. `FakeLinUsbDevice` transcribes the USB layer of `lin_usb.c`; the LIN engine
+is not in the repository, so its part of the fake was taken from these runs.
+
+| Checked | Result |
+|---|---|
+| Board config (DEVICE_CONFIG) | 6 tables, baud mask 0x7F (1200 too), HW 2: differs from the repository's `lin_usb_config.h` (4, 0x7E, 1); now `Config::canilfd()` |
+| STALLs: channel >= 2, slot >= 16, dlc 0 / 9, table >= 6, unknown request; zero-length IDENTIFY | identical |
+| Set-data ACKs: valid, dlc 0 / 9, channel 5, short packet (zeroed echo) | identical |
+| Engine (`linusb-engine`) | protected IDs (0x21 -> 0x61); publisher frames RESPONDED + VALID; unanswered subscriber slots SUBSCRIBER + ERROR, data zero, BUS_STATE then ERROR; set data accepted only while started and only for an ID in the active table (publisher or subscriber), otherwise ERROR ACK; new payload from the next slot on; sleep: id 0, dlc 8, `00 FF..`, SLEEP, state SLEEPING; wakeup: id 0, dlc 0, WAKEUP; STOPPED until MODE START. Modelled in the fake, `linusb-probe` 0 differences (6 runs) |
+| `LindeApiInterface` (`linusb-driver`) | opens in 40 ms; TX / RX direction, NotResponded errors, set data, rejected set data (TX error), timestamps, counters as in the unit tests; selecting a table that was never loaded keeps the schedule running (fixed driver) |
+| BUS_STATE.dropped | counts since the last USB reset, across host sessions: 422 left over from an aborted run showed up in the next one. The driver now counts from its open() |
+
+Found and fixed in the CANILFD firmware (`Libraries/LinIF/LinIF.c`,
+`Libraries/USBClasses/lin_usb_engine.c`): a channel stopped by the host
+(MODE STOP) restarted itself. `LinIF_Stop()` only cleared `isActive`, so the
+RXNE edge from disabling the transceiver (or any bus activity) looked like a
+slave wakeup to `LinIF_MasterWakeupISR()`, and 100 ms later `LinIF_Wakeup()`
+restarted the schedule while BUS_STATE still said STOPPED; a stopped slave
+came back on the next break. A host sleep / wakeup on a stopped channel was
+queued or restarted it too, and reported events that did not match the command
+(sleep -> wakeup). LinIF now has a `stopped` flag that only `LinIF_Start()`
+clears, and the engine ignores sleep / wakeup for a channel the host has not
+started. With the fixed firmware `linusb-probe` checks this (sleep / wakeup on
+a stopped channel: no events, no stale go-to-sleep at the next START, nothing
+sent after STOP): 0 differences in 12 runs; before, the spontaneous wakeup
+showed up in about 3 of 5.
+
+Not covered: a real slave on the bus (responses, checksum errors), slave and
+listen-only mode, baud rates other than 19200.

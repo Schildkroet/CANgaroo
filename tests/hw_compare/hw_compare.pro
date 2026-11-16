@@ -11,6 +11,9 @@ CONFIG += link_pkgconfig
 PKGCONFIG += libusb-1.0
 
 HEADERS += \
+    linusb_compare.h \
+    ../lindeapi_driver/FakeLinUsbDevice.h \
+    $$SRC_DIR/driver/LindeApiDriver/LindeApiInterface.h \
     ../slcan_driver/FakeSlcanDevice.h \
     ../candle_driver/FakeGsUsbDevice.h \
     $$SRC_DIR/driver/CandleApiDriver/CandleApiInterface.h \
@@ -21,6 +24,15 @@ HEADERS += \
 
 SOURCES += \
     main.cpp \
+    linusb_compare.cpp \
+    ../lindeapi_driver/FakeLinUsbDevice.cpp \
+    $$SRC_DIR/driver/LindeApiDriver/LindeApiInterface.cpp \
+    $$SRC_DIR/driver/LindeApiDriver/LindeSharedDevice.cpp \
+    $$SRC_DIR/driver/UsbVendorInterface/UsbVendorInterface.cpp \
+    $$SRC_DIR/driver/UsbVendorInterface/UsbVendorInterfaceLibusb.cpp \
+    $$SRC_DIR/db/model/LinDb.cpp \
+    $$SRC_DIR/db/model/LinFrame.cpp \
+    $$SRC_DIR/db/model/LinSignal.cpp \
     ../slcan_driver/FakeSlcanDevice.cpp \
     ../candle_driver/FakeGsUsbDevice.cpp \
     candle_usb_hw.cpp \

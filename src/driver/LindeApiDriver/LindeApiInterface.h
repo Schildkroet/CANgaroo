@@ -68,6 +68,8 @@ private:
 
     // Frames the device itself had to drop; refreshed by getState().
     std::atomic<uint32_t> _devRxDropped{0};
+    // BUS_STATE.dropped at open(); written before _isOpen, read by getState()
+    uint16_t _devRxDroppedBase{0};
 
     // schedule entry counts per table (populated during open)
     static constexpr uint8_t MAX_TABLES = 8;

@@ -26,6 +26,7 @@
 //   slcan_hw_compare bus    <port> <socketcan if> [canable2|elmue]   (500k / 2M)
 //   slcan_hw_compare candle-probe <usb serial>          (gs_usb, vs. fake Elmue G431)
 //   slcan_hw_compare candle-bus   <usb serial> <socketcan if>
+//   slcan_hw_compare linusb-probe | linusb-engine | linusb-driver  (lin_usb, LindeAPI)
 //
 // "probe" sends a fixed list of command scripts and prints every reply byte;
 // run it once against the device and once against the fake and diff the two.
@@ -61,6 +62,8 @@
 #include "driver/CandleApiDriver/CandleSharedDevice.h"
 #include "driver/CandleApiDriver/api/candle_usb.h"
 #include "slcan_driver/FakeSlcanDevice.h"
+
+#include "linusb_compare.h"
 
 using namespace std::chrono_literals;
 
@@ -728,6 +731,8 @@ int main(int argc, char *argv[])
 {
     QCoreApplication app(argc, argv);
     const QStringList args = app.arguments();
+    if (args.size() >= 2 && args[1].startsWith("linusb-"))
+        return runLinUsb(args[1]);
     if (args.size() >= 3 && args[1] == "candle-probe")
         return runCandleProbe(args[2]);
     if (args.size() >= 3 && args[1] == "candle-leave")

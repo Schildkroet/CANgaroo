@@ -382,6 +382,15 @@ void LindeApiInterface::open()
     _numTxErr = 0;
     _numRxErr = 0;
     _devRxDropped = 0;
+    // The device counts drops since its last USB reset, across host sessions:
+    // only those from now on belong to this measurement.
+    _devRxDroppedBase = 0;
+    if (_sharedDev->features & LIN_USB_FEATURE_BUS_STATE)
+    {
+        lin_usb_bus_state_t hwState{};
+        if (_sharedDev->getBusState(_channel, hwState))
+            _devRxDroppedBase = hwState.dropped;
+    }
     _isOpen.store(true);
 }
 
@@ -535,13 +544,18 @@ void LindeApiInterface::setLinScheduleTable(uint8_t tableIndex)
         log_warning(QStringLiteral("LindeAPI: schedule table %1 out of range").arg(tableIndex));
         return;
     }
+    // A table that was never uploaded (not in the LDF, or beyond the device's
+    // tables) has no entries: keep the running schedule instead of stopping it.
+    const uint8_t count = _tableEntryCounts[tableIndex];
+    if (count == 0)
+    {
+        log_warning(QStringLiteral("LindeAPI: schedule table %1 not loaded, keeping table %2")
+                        .arg(tableIndex).arg(_activeTable));
+        return;
+    }
     _sharedDev->scheduleStop(_channel);
     _activeTable = tableIndex;
-    const uint8_t count = _tableEntryCounts[tableIndex];
-    if (count > 0)
-    {
-        _sharedDev->scheduleStart(_channel, tableIndex, count);
-    }
+    _sharedDev->scheduleStart(_channel, tableIndex, count);
 }
 
 void LindeApiInterface::sendLinDiagRequest(uint8_t nad, const uint8_t *data, uint8_t len)
@@ -579,7 +593,9 @@ uint32_t LindeApiInterface::getState()
     if (!_sharedDev->getBusState(_channel, hwState))
         return state_unknown;
 
-    _devRxDropped.store(hwState.dropped);
+    // The counter only restarts at a USB reset (then it is below the base)
+    const uint16_t base = _devRxDroppedBase;
+    _devRxDropped.store(hwState.dropped >= base ? hwState.dropped - base : hwState.dropped);
 
     switch (static_cast<lin_usb_bus_state_e>(hwState.state))
     {

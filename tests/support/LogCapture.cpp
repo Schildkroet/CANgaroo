@@ -23,19 +23,33 @@
 
 #include "LogCapture.h"
 
+#include <QMutex>
+#include <QMutexLocker>
+
 #include "core/Log.h"
 
 namespace
 {
+QMutex g_mutex;
 QStringList g_warnings;
 QStringList g_errors;
 } // namespace
 
-const QStringList &logcapture::warnings() { return g_warnings; }
-const QStringList &logcapture::errors() { return g_errors; }
+QStringList logcapture::warnings()
+{
+    QMutexLocker lock(&g_mutex);
+    return g_warnings;
+}
+
+QStringList logcapture::errors()
+{
+    QMutexLocker lock(&g_mutex);
+    return g_errors;
+}
 
 void logcapture::clear()
 {
+    QMutexLocker lock(&g_mutex);
     g_warnings.clear();
     g_errors.clear();
 }
@@ -45,7 +59,23 @@ void log_msg(const log_level_t, const QString) {}
 
 void log_debug(const QString) {}
 void log_info(const QString) {}
-void log_warning(const QString msg) { g_warnings.append(msg); }
-void log_error(const QString msg) { g_errors.append(msg); }
-void log_critical(const QString msg) { g_errors.append(msg); }
-void log_fatal(const QString msg) { g_errors.append(msg); }
+void log_warning(const QString msg)
+{
+    QMutexLocker lock(&g_mutex);
+    g_warnings.append(msg);
+}
+void log_error(const QString msg)
+{
+    QMutexLocker lock(&g_mutex);
+    g_errors.append(msg);
+}
+void log_critical(const QString msg)
+{
+    QMutexLocker lock(&g_mutex);
+    g_errors.append(msg);
+}
+void log_fatal(const QString msg)
+{
+    QMutexLocker lock(&g_mutex);
+    g_errors.append(msg);
+}
