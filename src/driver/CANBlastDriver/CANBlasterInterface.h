@@ -25,6 +25,8 @@
 #include "../BusInterface.h"
 
 #include <atomic>
+#include <chrono>
+#include <memory>
 
 #include <QTimer>
 #include <QtNetwork/QUdpSocket>
@@ -57,6 +59,9 @@ struct can_status_t {
 class CANBlasterInterface: public BusInterface {
     Q_OBJECT
 public:
+    // Listens for CANblaster server beacons for `window`; returns their addresses.
+    static QList<QString> discoverServers(std::chrono::milliseconds window);
+
     CANBlasterInterface(CANBlasterDriver *driver, int index, QString name, bool fd_support);
     ~CANBlasterInterface() override;
 
@@ -113,8 +118,10 @@ private:
     ts_mode_t _ts_mode;
 
     qint64 _heartbeat_time_ms;
-    QUdpSocket* _socket;
-    const char *cname();
+    // Bound to the client port while open; reset on close() to release it
+    std::unique_ptr<QUdpSocket> _socket;
+
+    void sendHeartbeat();
 
 };
 

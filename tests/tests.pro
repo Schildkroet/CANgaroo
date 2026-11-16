@@ -21,4 +21,5 @@ SUBDIRS += \
     ulc_driver \
     slcan_driver \
     candle_driver \
+    canblaster_driver \
     measurement_setup

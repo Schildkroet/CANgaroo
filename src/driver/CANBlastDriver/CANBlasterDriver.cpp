@@ -53,54 +53,7 @@ bool CANBlasterDriver::update() {
 
     deleteAllInterfaces();
 
-    // TODO: Listen for multicast packets for discovery of canblaster servers
-    QUdpSocket udpSocket;
-    QHostAddress groupAddress;
-    groupAddress.setAddress("239.255.43.21");
-    udpSocket.bind(QHostAddress::AnyIPv4, 20000, QUdpSocket::ShareAddress);
-    udpSocket.joinMulticastGroup(groupAddress);
-
-    // Record start time
-    qint64 start_time_ms = QDateTime::currentMSecsSinceEpoch();
-
-    fprintf(stderr, "CANblaster: start listen\r\n");
-
-    QList<QString> detected_servers;
-
-    while(1)
-    {
-        while (udpSocket.hasPendingDatagrams())
-        {
-            QNetworkDatagram res = udpSocket.receiveDatagram(1024);
-            if(res.isValid())
-            {
-                QByteArray asd = res.data();
-                qDebug() << asd;
-                QJsonDocument document = QJsonDocument::fromJson(res.data());
-                QJsonObject rootObj = document.object();
-
-
-                if(rootObj.length() == 2 &&
-                   rootObj["protocol"].toString() == "CANblaster" &&
-                   rootObj["version"].toInt() == 1)
-                {
-                    if(!detected_servers.contains(res.senderAddress().toString()))
-                        detected_servers.append(res.senderAddress().toString());
-                }
-                else
-                {
-                    fprintf(stderr, "Invalid CANblaster server. Protocol: %s  Version: %d \r\n", rootObj["protocol"].toString().toStdString().c_str(), rootObj["version"].toInt());
-                }
-            }
-        }
-
-        qint64 current_time_ms = QDateTime::currentMSecsSinceEpoch();
-
-        // Iterate until timer expires (2 seconds)
-        if ((current_time_ms - start_time_ms) > 2000)
-            break;
-    }
-    fprintf(stderr, "CANblaster: stop listen\r\n");
+    const QList<QString> detected_servers = CANBlasterInterface::discoverServers(std::chrono::milliseconds(2000));
 
     fprintf(stderr, "Found %lld servers: \r\n", detected_servers.length());
     int interface_cnt = 0;

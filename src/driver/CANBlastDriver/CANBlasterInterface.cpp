@@ -21,6 +21,7 @@
 
 #include "CANBlasterInterface.h"
 
+#include <algorithm>
 #include <cstdio>
 
 #include <QNetworkDatagram>
@@ -28,8 +29,12 @@
 #include <QStringList>
 #include <QThread>
 #include <QTimer>
+#include <QDateTime>
+#include <QJsonObject>
+#include <QJsonDocument>
 
 #include "core/Backend.h"
+#include "core/Log.h"
 #include "core/BusMessage.h"
 #include "core/MeasurementInterface.h"
 
@@ -38,8 +43,7 @@ CANBlasterInterface::CANBlasterInterface(CANBlasterDriver *driver, int index, QS
   : BusInterface(reinterpret_cast<CanDriver*>(driver)),
     _idx(index),
     _name(name),
-    _ts_mode(ts_mode_SIOCSHWTSTAMP),
-    _socket(nullptr)
+    _ts_mode(ts_mode_SIOCSHWTSTAMP)
 {
     // Set defaults
     _settings.setBitrate(500000);
@@ -51,7 +55,9 @@ CANBlasterInterface::CANBlasterInterface(CANBlasterDriver *driver, int index, QS
     _heartbeat_time_ms = QDateTime::currentMSecsSinceEpoch();
 }
 
-CANBlasterInterface::~CANBlasterInterface() {
+CANBlasterInterface::~CANBlasterInterface()
+{
+    close();  // releases the client port for the next interface
 }
 
 QString CANBlasterInterface::getDetailsStr() const {
@@ -183,38 +189,30 @@ int CANBlasterInterface::getIfIndex() {
     return _idx;
 }
 
-const char *CANBlasterInterface::cname()
-{
-    return _name.toStdString().c_str();
-}
 
 void CANBlasterInterface::open()
 {
-
     // Start off with a fresh socket
-    if(_socket != nullptr)
-    {
-        delete _socket;
-    }
-    _socket = new QUdpSocket();
+    _socket = std::make_unique<QUdpSocket>();
 
-    if(_socket->bind(QHostAddress::AnyIPv4, 20001))
+    // canblaster.py sends a client the frames from its heartbeat's source
+    // address, so heartbeats and frames share this port.
+    if (_socket->bind(QHostAddress::AnyIPv4, 20001))
     {
         _isOpen = true;
+        sendHeartbeat();  // subscribe now, not a second later
     }
     else
     {
-        perror("CANBlaster Bind Failed!");
+        log_error(tr("CANblaster: cannot listen on UDP port 20001: %1").arg(_socket->errorString()));
+        _socket.reset();
         _isOpen = false;
     }
 }
 
 void CANBlasterInterface::close()
 {
-    if(_socket != nullptr && _socket->isOpen())
-    {
-        _socket->close();
-    }
+    _socket.reset();
     _isOpen = false;
 }
 
@@ -225,83 +223,119 @@ bool CANBlasterInterface::isOpen()
 
 void CANBlasterInterface::sendMessage(const BusMessage &msg)
 {
+    // canblaster.py does not put frames from clients on the bus (TX is a TODO there)
     Q_UNUSED(msg);
+}
+
+void CANBlasterInterface::sendHeartbeat()
+{
+    // Any datagram is a heartbeat; the server forgets a client after 5 s without one
+    _heartbeat_time_ms = QDateTime::currentMSecsSinceEpoch();
+    _socket->writeDatagram(QByteArrayLiteral("Heartbeat"), QHostAddress(getName()), 20002);
 }
 
 bool CANBlasterInterface::readMessage(QList<BusMessage> &msglist, unsigned int timeout_ms)
 {
-    // Don't saturate the thread
-    QThread::usleep(250);
+    if (!_isOpen || !_socket)
+        return false;
 
-    Q_UNUSED(timeout_ms);
+    if (QDateTime::currentMSecsSinceEpoch() - _heartbeat_time_ms > 1000)
+        sendHeartbeat();
 
-    // Record start time
-    qint64 current_time_ms = QDateTime::currentMSecsSinceEpoch();
+    // Wait for data instead of returning at once: the listener calls this in a loop.
+    if (!_socket->hasPendingDatagrams() && !_socket->waitForReadyRead(static_cast<int>(timeout_ms)))
+        return false;
 
-    if(current_time_ms - _heartbeat_time_ms > 1000)
+    // Every pending datagram: at full bus load the server sends thousands per
+    // second, and the socket buffer overflows if they are read one per call.
+    const QHostAddress server(getName());
+    bool any = false;
+    while (_socket->hasPendingDatagrams())
     {
-
-        _heartbeat_time_ms = current_time_ms;
-
-        if(_isOpen)
-        {
-            QByteArray Data;
-            Data.append("Heartbeat");
-            _socket->writeDatagram(Data, QHostAddress(getName()), 20002);
-        }
-    }
-
-    // NOTE: This only works with standard CAN frames right now!
-
-    // Process all pending datagrams
-    // TODO: Could switch to if from while but the caller expects 1 can frame
-    if (_isOpen && _socket->hasPendingDatagrams())
-    {
-        can_frame frame;
+        can_frame frame{};
         QHostAddress address;
-        quint16 port;
-        int res = _socket->readDatagram((char*)&frame, sizeof(can_frame), &address, &port);
+        const qint64 res = _socket->readDatagram(reinterpret_cast<char *>(&frame), sizeof(frame), &address);
 
-        // TODO: Read all bytes... to CANFD_MTU max
-//        if (nbytes == CANFD_MTU) {
-//                printf("got CAN FD frame with length %d\n", cfd.len);
-//                /* cfd.flags contains valid data */
-//        } else if (nbytes == CAN_MTU) {
-//                printf("got Classical CAN frame with length %d\n", cfd.len);
-//                /* cfd.flags is undefined */
-//        } else {
-//                fprintf(stderr, "read: invalid CAN(FD) frame\n");
-//                return 1;
-//        }
+        // Only the server's classic frames (CAN_MTU); not a stray datagram on this port
+        if (res != static_cast<qint64>(sizeof(can_frame)) || !address.isEqual(server, QHostAddress::TolerantConversion))
+            continue;
 
-        if(res > 0)
-        {
-            // Set timestamp to current time
-            BusMessage msg;
-
-            msg.setTimestamp_ms(QDateTime::currentMSecsSinceEpoch());
-
-            msg.setInterfaceId(getId());
-            msg.setId(frame.can_id & CAN_ERR_MASK);
-            msg.setBRS(false);
-            msg.setErrorFrame(frame.can_id & CAN_ERR_FLAG);
-            msg.setExtended(frame.can_id & CAN_EFF_FLAG);
-            msg.setRTR(frame.can_id & CAN_RTR_FLAG);
-            msg.setLength(frame.len);
-
-            for(int i=0; i<frame.len && i<CAN_MAX_DLEN; i++)
-            {
-                msg.setDataAt(i, frame.data[i]);
-            }
-            msglist.append(msg);
-            return true;
-        }
-        else
-        {
-            return false;
-        }
+        BusMessage msg;
+        msg.setTimestamp_ms(QDateTime::currentMSecsSinceEpoch());
+        msg.setInterfaceId(getId());
+        msg.setId(frame.can_id & CAN_ERR_MASK);
+        msg.setBRS(false);
+        msg.setErrorFrame(frame.can_id & CAN_ERR_FLAG);
+        msg.setExtended(frame.can_id & CAN_EFF_FLAG);
+        msg.setRTR(frame.can_id & CAN_RTR_FLAG);
+        const uint8_t len = std::min<uint8_t>(frame.len, CAN_MAX_DLEN);
+        msg.setLength(len);
+        for (uint8_t i = 0; i < len; i++)
+            msg.setDataAt(i, frame.data[i]);
+        msglist.append(msg);
+        _status.rx_count.fetch_add(1);
+        any = true;
     }
-    return false;
-
+    return any;
 }
 
+// Listens for the multicast beacons of CANblaster servers for `window` and
+// returns their addresses (canblaster.py send_beacon()).
+QList<QString> CANBlasterInterface::discoverServers(std::chrono::milliseconds window)
+{
+    // TODO: Listen for multicast packets for discovery of canblaster servers
+    QUdpSocket udpSocket;
+    QHostAddress groupAddress;
+    groupAddress.setAddress("239.255.43.21");
+    udpSocket.bind(QHostAddress::AnyIPv4, 20000, QUdpSocket::ShareAddress);
+    udpSocket.joinMulticastGroup(groupAddress);
+
+    // Record start time
+    qint64 start_time_ms = QDateTime::currentMSecsSinceEpoch();
+
+    fprintf(stderr, "CANblaster: start listen\r\n");
+
+    QList<QString> detected_servers;
+
+    while(1)
+    {
+        // Wait for a datagram instead of polling (the window blocks the caller)
+        const qint64 left = window.count() - (QDateTime::currentMSecsSinceEpoch() - start_time_ms);
+        if (left > 0 && !udpSocket.hasPendingDatagrams())
+            udpSocket.waitForReadyRead(static_cast<int>(left));
+
+        while (udpSocket.hasPendingDatagrams())
+        {
+            QNetworkDatagram res = udpSocket.receiveDatagram(1024);
+            if(res.isValid())
+            {
+                QByteArray asd = res.data();
+                qDebug() << asd;
+                QJsonDocument document = QJsonDocument::fromJson(res.data());
+                QJsonObject rootObj = document.object();
+
+
+                if(rootObj.length() == 2 &&
+                   rootObj["protocol"].toString() == "CANblaster" &&
+                   rootObj["version"].toInt() == 1)
+                {
+                    if(!detected_servers.contains(res.senderAddress().toString()))
+                        detected_servers.append(res.senderAddress().toString());
+                }
+                else
+                {
+                    fprintf(stderr, "Invalid CANblaster server. Protocol: %s  Version: %d \r\n", rootObj["protocol"].toString().toStdString().c_str(), rootObj["version"].toInt());
+                }
+            }
+        }
+
+        qint64 current_time_ms = QDateTime::currentMSecsSinceEpoch();
+
+        // Iterate until the listening window has passed
+        if ((current_time_ms - start_time_ms) > window.count())
+            break;
+    }
+    fprintf(stderr, "CANblaster: stop listen\r\n");
+
+    return detected_servers;
+}
