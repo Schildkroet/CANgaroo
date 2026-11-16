@@ -25,6 +25,7 @@
 
 #include "PythonEngine.h"
 
+#include <mutex>
 #include <optional>
 
 #include "core/AutosarE2E.h"
@@ -960,9 +961,20 @@ static QString findPythonHome()
 #endif // Q_OS_WIN
 }
 
+// ---------------------------------------------------------------------------
+// One interpreter per process, shared by every PythonEngine (one per Trace tab).
+//
+// CPython can't host a second py::scoped_interpreter. pybind11 refuses one, but
+// first asserts !PyErr_Occurred() while the first engine has released the GIL:
+// no thread state, and libpython dereferences null (issue #50). So the first
+// engine creates the interpreter, the last one finalizes it.
+// ---------------------------------------------------------------------------
+namespace
+{
+
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wattributes"
-struct PythonEngine::PyInterpreterHolder
+struct EmbeddedInterpreter
 {
     bool _env{ prepareEnvironment() };
     py::scoped_interpreter guard{};
@@ -981,17 +993,57 @@ struct PythonEngine::PyInterpreterHolder
         return true;
     }
 
-    PyInterpreterHolder()
+    EmbeddedInterpreter()
     {
         savedState = PyEval_SaveThread();
     }
 
-    ~PyInterpreterHolder()
+    ~EmbeddedInterpreter()
     {
         PyEval_RestoreThread(savedState);
     }
 };
 #pragma GCC diagnostic pop
+
+std::mutex g_interpreterMutex;
+int g_interpreterRefs = 0;
+// Raw on purpose: an engine orphaned by a script that ignores stop may still
+// hold a reference at exit, and finalizing during static destruction under its
+// running thread would be worse than not finalizing at all.
+EmbeddedInterpreter *g_interpreter = nullptr;
+
+// The engine whose script is running. The embedded module reaches its engine
+// through the single g_activeEngine, so only one script may run at a time.
+std::atomic<PythonEngine *> g_runningEngine{nullptr};
+
+} // namespace
+
+// A reference to the shared interpreter; throws if it can't be created.
+struct PythonEngine::PyInterpreterHolder
+{
+    PyInterpreterHolder()
+    {
+        std::lock_guard lock(g_interpreterMutex);
+        if (g_interpreterRefs == 0)
+        {
+            g_interpreter = new EmbeddedInterpreter();
+        }
+        ++g_interpreterRefs;
+    }
+
+    ~PyInterpreterHolder()
+    {
+        std::lock_guard lock(g_interpreterMutex);
+        if (--g_interpreterRefs == 0)
+        {
+            delete g_interpreter;
+            g_interpreter = nullptr;
+        }
+    }
+
+    PyInterpreterHolder(const PyInterpreterHolder &) = delete;
+    PyInterpreterHolder &operator=(const PyInterpreterHolder &) = delete;
+};
 
 PythonEngine::PythonEngine(Backend &backend, QObject *parent)
     : QObject(parent)
@@ -1023,6 +1075,16 @@ void PythonEngine::runScript(const QString &code)
     }
 
     if (_running) { return; }
+
+    // Released by workerFunc() once the script really ended, so a script that
+    // ignored stop and was orphaned keeps blocking others until it exits.
+    PythonEngine *noEngine = nullptr;
+    if (!g_runningEngine.compare_exchange_strong(noEngine, this))
+    {
+        emit scriptError("A Python script is already running in another tab. "
+                         "Stop it before starting this one.\n");
+        return;
+    }
 
     _stopRequested = false;
     _running = true;
@@ -1342,6 +1404,7 @@ _threading.settrace(_cangaroo_trace)
     PyGILState_Release(gstate);
 
     g_activeEngine = nullptr;
+    g_runningEngine = nullptr;
     _running = false;
     emit scriptFinished();
 }

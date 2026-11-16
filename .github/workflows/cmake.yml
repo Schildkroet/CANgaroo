@@ -24,7 +24,8 @@ jobs:
         sudo apt update
         # The tests link individual source files rather than the whole app, so
         # QtCore, QtXml (CanDb) and Qt Test are enough -- no charts/serialbus.
-        sudo apt install -y build-essential qt6-base-dev
+        # python3-dev + pybind11-dev: python_engine embeds the interpreter.
+        sudo apt install -y build-essential qt6-base-dev pkg-config python3-dev pybind11-dev
 
     - name: Build and run tests
       run: |

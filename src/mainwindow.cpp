@@ -1271,11 +1271,9 @@ QDockWidget *MainWindow::addTxGeneratorWidget(QMainWindow *parent)
 
 QDockWidget *MainWindow::addScriptWidget(QMainWindow *parent)
 {
-    // Only one PythonEngine/interpreter can exist per process (CPython embedding
-    // does not support concurrent sub-interpreters here), so reuse an existing
-    // Script dock in this tab instead of constructing a second ScriptWindow —
-    // doing so would crash inside libpython when the second scoped_interpreter
-    // attempt fails without holding the GIL.
+    // One Script dock per tab: reuse an existing one instead of stacking a second
+    // ScriptWindow on top (#30). Engines in different tabs share the process's one
+    // Python interpreter (see PythonEngine.cpp, #50).
     QMainWindow *targetTab = parent ? parent : currentTab();
     if (targetTab)
     {

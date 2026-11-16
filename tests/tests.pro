@@ -23,4 +23,5 @@ SUBDIRS += \
     candle_driver \
     canblaster_driver \
     lindeapi_driver \
-    measurement_setup
+    measurement_setup \
+    python_engine
