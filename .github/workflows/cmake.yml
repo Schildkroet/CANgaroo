@@ -4,6 +4,9 @@ on:
   workflow_dispatch:  # enables manual trigger
   push:
     branches: [ "main", "master" ]
+    # A version tag (V0.7.2, as the existing tags, or v0.7.2) also publishes a
+    # draft release with the DEB, AppImage and Windows zip, see "release" below.
+    tags: [ "V*", "v*" ]
   pull_request:
     branches: [ "main", "master" ]
 
@@ -65,6 +68,8 @@ jobs:
   build-ubuntu:
     name: Build CANgaroo DEB (Ubuntu / Qt6)
     runs-on: ubuntu-24.04
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
 
     env:
       # Kvaser linuxcan version — update here when a newer SDK is released.
@@ -177,15 +182,21 @@ jobs:
 
           dpkg-deb --build --root-owner-group "${DEB_DIR}"
 
+    # A single file, uploaded as it is (archive: false), so the release can
+    # attach it directly
     - name: Upload DEB package
-      uses: actions/upload-artifact@v6
+      id: upload
+      uses: actions/upload-artifact@v7
       with:
-          name: CANgaroo-Linux-DEB
           path: "*.deb"
+          archive: false
+          if-no-files-found: error
 
   build-appimage:
     name: Build CANgaroo AppImage (Qt 6.8 + Adwaita decorations)
     runs-on: ubuntu-24.04
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
 
     env:
       # Kvaser linuxcan version — keep in sync with the DEB job above.
@@ -379,15 +390,24 @@ jobs:
           esac
         done
 
+    - name: Name AppImage after the version
+      run: |
+        VERSION=$(grep '^VERSION' src/src.pro | sed 's/VERSION\s*=\s*//')
+        mv "$(ls CAN*.AppImage | head -n1)" "CANgaroo-${VERSION}-x86_64.AppImage"
+
     - name: Upload AppImage
-      uses: actions/upload-artifact@v6
+      id: upload
+      uses: actions/upload-artifact@v7
       with:
-          name: CANgaroo-Linux-AppImage
-          path: "CAN*.AppImage"
+          path: "CANgaroo-*-x86_64.AppImage"
+          archive: false
+          if-no-files-found: error
 
   build-windows:
     name: Build CANgaroo (Windows / MinGW / Qt6)
     runs-on: windows-2022
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
 
     env:
       # Kvaser CANlib Windows SDK version — update here when a newer SDK is released.
@@ -570,8 +590,59 @@ jobs:
           EXE=$(ls dist/*.exe | head -n 1)
           ntldd "$EXE" || true
 
+      - name: Zip
+        shell: pwsh
+        run: |
+          # named after the program version (VERSION in src/src.pro)
+          $version = (Select-String -Path src/src.pro -Pattern '^VERSION\s*=\s*(\S+)').Matches[0].Groups[1].Value
+          $name = "CANgaroo-$version-windows-x64"
+          Move-Item dist $name
+          Compress-Archive -Path $name -DestinationPath "$name.zip"
+
+      # upload the zip as it is: zipped again by upload-artifact, the download
+      # would be a zip inside a zip
       - name: Upload Windows Qt6 binaries
-        uses: actions/upload-artifact@v6
+        id: upload
+        uses: actions/upload-artifact@v7
         with:
-          name: CANgaroo-Windows-MinGW-Qt6
-          path: dist/*
+          path: "CANgaroo-*-windows-x64.zip"
+          archive: false
+          if-no-files-found: error
+
+  release:
+    name: Release (tags only)
+    needs: [unit-tests, format-compat, build-ubuntu, build-appimage, build-windows]
+    if: startsWith(github.ref, 'refs/tags/V') || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      # The packages are named after VERSION in src/src.pro: a tag that does not
+      # match it would publish files with another version than the release
+      - name: Check tag against src/src.pro
+        run: |
+          VERSION=$(grep '^VERSION' src/src.pro | sed 's/VERSION\s*=\s*//')
+          TAG="${GITHUB_REF_NAME#[Vv]}"
+          if [ "$TAG" != "$VERSION" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match VERSION = ${VERSION} in src/src.pro"
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ needs.build-ubuntu.outputs.artifact_id }}, ${{ needs.build-appimage.outputs.artifact_id }}, ${{ needs.build-windows.outputs.artifact_id }}
+          path: artifacts
+          merge-multiple: true
+          skip-decompress: true     # the Windows zip stays a zip (it would be unpacked into a folder, which the upload skips)
+
+      - name: Show files
+        run: ls -alR artifacts
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          name: CANgaroo ${{ github.ref_name }}
+          draft: true
+          files: artifacts/*
