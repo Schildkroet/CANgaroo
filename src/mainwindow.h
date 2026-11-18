@@ -26,6 +26,7 @@
 #include <QColor>
 #include <QIcon>
 #include <QList>
+#include <QPointer>
 #include "core/Backend.h"
 #include <QTranslator>
 #include <QSettings>
@@ -55,6 +56,7 @@ class MainWindow;
 
 class ConfigurableWidget;
 class SetupDialog;
+class HardwareDialog;
 
 class MainWindow : public QMainWindow
 {
@@ -110,10 +112,12 @@ private slots:
     void exportFullTrace();
     void importFullTrace();
     void reloadInterfaces();
+    void showHardwareDialog();
 
 private:
     Ui::MainWindow *ui;
     SetupDialog *_setupDlg = nullptr;
+    QPointer<HardwareDialog> _hardwareDlg;
     QSettings settings;
 
     bool _workspaceModified = false;

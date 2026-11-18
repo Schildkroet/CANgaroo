@@ -198,6 +198,7 @@
     <addaction name="separator"/>
     <addaction name="actionSetup"/>
     <addaction name="actionReload_Interfaces"/>
+    <addaction name="actionHardware"/>
     <addaction name="menuDriver"/>
    </widget>
    <widget class="QMenu" name="menuHelp">
@@ -271,6 +272,14 @@
   <action name="actionReload_Interfaces">
    <property name="text">
     <string>&amp;Reload Interfaces</string>
+   </property>
+  </action>
+  <action name="actionHardware">
+   <property name="text">
+    <string>&amp;Hardware...</string>
+   </property>
+   <property name="toolTip">
+    <string>Show all available devices with status, version and capabilities</string>
    </property>
   </action>
   <action name="actionAbout">

@@ -85,6 +85,7 @@ public:
     CanDbMessage *findDbMessage(const BusMessage &msg) const;
     LinFrame     *findLinFrame(const BusMessage &msg) const;
 
+    [[nodiscard]] const QList<CanDriver*> &getDrivers() const noexcept { return _drivers; }
     BusInterfaceIdList getInterfaceList();
     CanDriver *getDriverById(BusInterfaceId id);
     BusInterface *getInterfaceById(BusInterfaceId id);

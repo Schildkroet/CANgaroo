@@ -62,6 +62,7 @@
 #include "window/GatewayWindow/GatewayWindow.h"
 #include "window/SettingsDialog/SettingsDialog.h"
 #include "window/RecordingDialog/RecordingDialog.h"
+#include "window/HardwareDialog/HardwareDialog.h"
 #include "helpers/apphelpers.h"
 
 #include "driver/SLCANDriver/SLCANDriver.h"
@@ -165,6 +166,7 @@ void MainWindow::initActions()
     connect(ui->btnSetupMeasurement, &QPushButton::released, this, &MainWindow::showSetupDialog);
 
     connect(ui->actionReload_Interfaces, &QAction::triggered, this, &MainWindow::reloadInterfaces);
+    connect(ui->actionHardware, &QAction::triggered, this, &MainWindow::showHardwareDialog);
 
 #if defined(_WIN32) && defined(ZSCANFD_DRIVER)
     connect(ui->actionDownloadZsCanFdDlls, &QAction::triggered, this, &MainWindow::downloadZsCanFdDlls);
@@ -1380,6 +1382,18 @@ bool MainWindow::showSetupDialog()
 void MainWindow::reloadInterfaces()
 {
     backend().refreshInterfaces();
+}
+
+void MainWindow::showHardwareDialog()
+{
+    if (!_hardwareDlg)
+    {
+        _hardwareDlg = new HardwareDialog(backend(), this);
+        _hardwareDlg->setAttribute(Qt::WA_DeleteOnClose);
+    }
+    _hardwareDlg->show();
+    _hardwareDlg->raise();
+    _hardwareDlg->activateWindow();
 }
 
 void MainWindow::showAboutDialog()
