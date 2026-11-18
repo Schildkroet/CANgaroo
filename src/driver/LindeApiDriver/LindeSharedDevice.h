@@ -11,6 +11,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <thread>
 
@@ -43,6 +44,17 @@ struct LindeSharedDevice
     uint32_t              features{0};       // LIN_USB_FEATURE_* bitmask
     uint32_t              swVersion{0};      // firmware version from DEVICE_CONFIG, major << 16 | minor << 8 | patch
     uint32_t              hwVersion{0};      // hardware revision from DEVICE_CONFIG
+
+    // What the device said about itself in its last DEVICE_CONFIG. Unlike the
+    // fields above it survives close(), so the brief open during discovery is
+    // enough to report version and capabilities before a measurement starts.
+    struct Identity
+    {
+        uint32_t features{0};
+        uint32_t swVersion{0};
+        uint32_t hwVersion{0};
+    };
+    std::optional<Identity> identity;
 
     QString productName{"Linde"};
     int     deviceIndex{0};   // n-th lin_usb device exposing the LIN interface

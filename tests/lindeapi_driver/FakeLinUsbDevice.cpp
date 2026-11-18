@@ -167,9 +167,7 @@ bool FakeLinUsbDevice::controlSetup(bool in, uint8_t bRequest, uint16_t wValue, 
         cfg.icount = k_channels - 1;
         cfg.sw_version = (0u << 16) | (1u << 8) | 0u;
         cfg.hw_version = _config.hwVersion;
-        cfg.features = LIN_USB_FEATURE_SCHEDULING | LIN_USB_FEATURE_CUSTOM_BAUDRATE |
-                       LIN_USB_FEATURE_TIMESTAMP | LIN_USB_FEATURE_BUS_STATE |
-                       LIN_USB_FEATURE_LISTEN_ONLY;
+        cfg.features = _config.features;
         return send(&cfg, sizeof(cfg));
     }
     case LIN_USB_BREQ_TIMESTAMP:

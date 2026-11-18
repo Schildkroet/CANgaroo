@@ -53,6 +53,7 @@ bool LindeSharedDevice::open()
     features       = dcfg.features;
     swVersion      = dcfg.sw_version;
     hwVersion      = dcfg.hw_version;
+    identity       = Identity{.features = features, .swVersion = swVersion, .hwVersion = hwVersion};
 
     {
         QMutexLocker lock(&queueMutex);

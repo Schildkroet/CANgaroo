@@ -45,15 +45,15 @@ QString LindeApiInterface::getDetailsStr() const
 
 QString LindeApiInterface::getVersion()
 {
-    // Reported by DEVICE_CONFIG on open; before that the device is not queried.
-    if (!_sharedDev->usb.isOpen())
+    // From the last DEVICE_CONFIG (discovery or open), kept across close().
+    if (!_sharedDev->identity)
         return BusInterface::getVersion();
-    const uint32_t sw = _sharedDev->swVersion; // major << 16 | minor << 8 | patch
+    const auto &[features, sw, hw] = *_sharedDev->identity; // sw: major << 16 | minor << 8 | patch
     return QStringLiteral("%1.%2.%3 (HW %4)")
         .arg((sw >> 16) & 0xFFu)
         .arg((sw >> 8) & 0xFFu)
         .arg(sw & 0xFFu)
-        .arg(_sharedDev->hwVersion);
+        .arg(hw);
 }
 
 void LindeApiInterface::applyConfig(const MeasurementInterface &mi)
@@ -68,7 +68,13 @@ unsigned LindeApiInterface::getBitrate()
 
 uint32_t LindeApiInterface::getCapabilities()
 {
-    return capability_lin_master | capability_lin_slave;
+    uint32_t caps = capability_lin_master | capability_lin_slave;
+    // Listen-only (monitor) is a firmware feature reported by DEVICE_CONFIG,
+    // which discovery already read. Without it (device never answered) assume
+    // current firmware, which has it; open() warns if the device turns out not to.
+    if (!_sharedDev->identity || (_sharedDev->identity->features & LIN_USB_FEATURE_LISTEN_ONLY))
+        caps |= capability_lin_monitor;
+    return caps;
 }
 
 QList<CanTiming> LindeApiInterface::getAvailableBitrates()

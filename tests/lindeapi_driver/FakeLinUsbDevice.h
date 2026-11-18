@@ -82,6 +82,10 @@ public:
         uint8_t tables;      // LIN_USB_MAX_SCHEDULE_TABLES
         uint8_t baudrates;   // LIN_USB_SUPPORTED_BAUDRATES
         uint32_t hwVersion;  // LIN_USB_HW_VERSION
+        // What lin_usb.c sets in DEVICE_CONFIG; older firmware lacks some bits
+        uint32_t features = LIN_USB_FEATURE_SCHEDULING | LIN_USB_FEATURE_CUSTOM_BAUDRATE |
+                            LIN_USB_FEATURE_TIMESTAMP | LIN_USB_FEATURE_BUS_STATE |
+                            LIN_USB_FEATURE_LISTEN_ONLY;
 
         static Config reference() { return {.tables = 4, .baudrates = 0x7E, .hwVersion = 1}; }
         static Config canilfd() { return {.tables = 6, .baudrates = 0x7F, .hwVersion = 2}; }

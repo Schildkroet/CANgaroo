@@ -179,6 +179,7 @@ private slots:
     void uploadsMasterSchedule();
     void uploadsSlaveTable();
     void listenOnlyStartsWithoutSchedule();
+    void advertisesMonitorFromFeatures();
     void receivesFrames_data();
     void receivesFrames();
     void routesFramesPerChannel();
@@ -235,6 +236,9 @@ void LindeApiDriverTest::readsDeviceConfig()
     QCOMPARE(rig.ch().getVersion(), version);
     rig.shared->close();
     QVERIFY(!rig.dev.claimed());
+    // Discovery opens briefly like this: what the device reported stays known
+    QCOMPARE(rig.ch().getVersion(), version);
+    QVERIFY(rig.ch().getCapabilities() & BusInterface::capability_lin_monitor);
 }
 
 void LindeApiDriverTest::configuresBusOnOpen()
@@ -332,6 +336,43 @@ void LindeApiDriverTest::listenOnlyStartsWithoutSchedule()
     QCOMPARE(int(c.mode->mode), int(LIN_USB_MODE_START));
     QCOMPARE(int(c.mode->entry_count), 0);
     QVERIFY(logcapture::warnings().isEmpty());
+}
+
+void LindeApiDriverTest::advertisesMonitorFromFeatures()
+{
+    constexpr uint32_t linModes = BusInterface::capability_lin_master | BusInterface::capability_lin_slave |
+                                  BusInterface::capability_lin_monitor;
+
+    // Firmware lin_usb.c reports LIN_USB_FEATURE_LISTEN_ONLY
+    {
+        Rig rig;
+        QCOMPARE(rig.ch().getVersion(), QStringLiteral("UnKnown"));
+        QCOMPARE(rig.ch().getCapabilities() & linModes, linModes); // not queried yet: assumed
+        rig.ch().applyConfig(linSettings(LinNodeMode::Slave));
+        rig.ch().open();
+        QVERIFY(rig.ch().isOpen());
+        QCOMPARE(rig.ch().getCapabilities() & linModes, linModes);
+    }
+
+    // Older firmware without it: no monitor once the device has said so,
+    // already after the brief open of discovery and across a measurement
+    {
+        auto config = FakeLinUsbDevice::Config::reference();
+        config.features &= ~LIN_USB_FEATURE_LISTEN_ONLY;
+        Rig rig(1, config);
+        constexpr uint32_t noMonitor = BusInterface::capability_lin_master | BusInterface::capability_lin_slave;
+
+        QVERIFY(rig.shared->open());
+        rig.shared->close();
+        QCOMPARE(rig.ch().getCapabilities() & linModes, noMonitor);
+
+        rig.ch().applyConfig(linSettings(LinNodeMode::Slave));
+        rig.ch().open();
+        QVERIFY(rig.ch().isOpen());
+        QCOMPARE(rig.ch().getCapabilities() & linModes, noMonitor);
+        rig.ch().close();
+        QCOMPARE(rig.ch().getCapabilities() & linModes, noMonitor);
+    }
 }
 
 void LindeApiDriverTest::receivesFrames_data()
