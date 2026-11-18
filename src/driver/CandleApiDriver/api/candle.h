@@ -265,6 +265,10 @@ wchar_t __stdcall DLL *candle_dev_get_path(candle_handle hdev);
 bool __stdcall DLL candle_dev_open(candle_handle hdev);
 bool __stdcall DLL candle_dev_get_timestamp_us(candle_handle hdev, uint32_t *timestamp_us);
 bool __stdcall DLL candle_dev_close(candle_handle hdev);
+/* sw_version / hw_version from DEVICE_CONFIG of the last open, also after close.
+ * False if the device was never opened. The encoding is up to the firmware:
+ * candleLight sends plain numbers, ElmueSoft BCD. */
+bool __stdcall DLL candle_dev_get_version(candle_handle hdev, uint32_t *sw_version, uint32_t *hw_version);
 bool __stdcall DLL candle_dev_free(candle_handle hdev);
 
 bool __stdcall DLL candle_channel_count(candle_handle hdev, uint8_t *num_channels);

@@ -131,6 +131,8 @@ void SLCANInterface::setName(QString name)
 QString SLCANInterface::getDetailsStr() const
 {
     const bool fd = _fdSupport;
+    if (isElmue())
+        return tr("CANable 2.5 (ElmueSoft Slcan firmware) with CANFD support");
     switch (_manufacturer)
     {
         case Manufacturer::CANable:
@@ -147,7 +149,7 @@ QString SLCANInterface::getDetailsStr() const
 
 QString SLCANInterface::getVersion()
 {
-    return _version;
+    return _version.isEmpty() ? BusInterface::getVersion() : _version;
 }
 
 int SLCANInterface::getIfIndex() const noexcept
@@ -370,20 +372,11 @@ void SLCANInterface::configureFdBitrate()
 
 // ── Open / Close ──────────────────────────────────────────────────────────────
 
-void SLCANInterface::open()
+// Brings the device into a known state (ASCII mode, channel closed) and reads
+// what it says about itself: confirmations, firmware version, ElmueSoft limits.
+// Used by open() and by probe(); the results stay valid after close().
+void SLCANInterface::queryDevice()
 {
-    _port = _transportFactory();
-
-    if (!_port->open(_name, SerialTransport::Settings{.baudRate = 1000000}))
-    {
-        log_error(tr("SLCAN: failed to open %1: %2").arg(_name, _port->errorString()));
-        _port.reset();
-        _isOpen = false;
-        _isOffline = true;
-        return;
-    }
-    _port->clear();
-
     // WeAct devices keep binary mode (H1) set by another application across
     // sessions; this driver only speaks ASCII, so force text mode first (issue #43).
     if (_manufacturer == Manufacturer::WeActStudio)
@@ -447,6 +440,43 @@ void SLCANInterface::open()
         _noConfirm = false;
         _version = _version.mid(1).replace('\t', QStringLiteral(", "));
     }
+}
+
+bool SLCANInterface::probe()
+{
+    if (_isOpen)
+        return true;
+
+    _port = _transportFactory();
+    if (!_port->open(_name, SerialTransport::Settings{.baudRate = 1000000}))
+    {
+        _port.reset();
+        return false;
+    }
+    _port->clear();
+    queryDevice();
+    _port->clear();
+    _port->close();
+    _port.reset();
+    return !_version.isEmpty();
+}
+
+
+void SLCANInterface::open()
+{
+    _port = _transportFactory();
+
+    if (!_port->open(_name, SerialTransport::Settings{.baudRate = 1000000}))
+    {
+        log_error(tr("SLCAN: failed to open %1: %2").arg(_name, _port->errorString()));
+        _port.reset();
+        _isOpen = false;
+        _isOffline = true;
+        return;
+    }
+    _port->clear();
+
+    queryDevice();
 
     configureBitrate();
     if (_fdSupport)

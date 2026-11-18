@@ -77,7 +77,7 @@ public:
     int getNumRxOverruns() override;
     int getNumTxDropped() override;
 
-    QString getVersion();
+    QString getVersion() override;
     std::wstring getPath() const;
     uint8_t getChannel() const;
 

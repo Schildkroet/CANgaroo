@@ -22,6 +22,7 @@
 #include "UlcDriver.h"
 #include "UlcInterface.h"
 #include "core/Backend.h"
+#include "core/Log.h"
 #include "driver/GenericLinSetupPage.h"
 #include "driver/SerialTransport/QtSerialTransport.h"
 
@@ -156,6 +157,9 @@ UlcInterface *UlcDriver::createOrUpdateInterface(int index, QString portName)
     }
 
     auto *ulcif = new UlcInterface(this, index, std::move(portName), QtSerialTransport::factory());
+    // Firmware version before the first measurement. A port in use stays unknown.
+    if (!ulcif->probe())
+        log_info(QStringLiteral("uLC: %1 did not report its version").arg(ulcif->getName()));
     addInterface(ulcif);
     return ulcif;
 }

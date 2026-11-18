@@ -128,6 +128,8 @@ private slots:
     // open()
     void opensAsMonitorWithoutLdf();
     void reportsFirmwareAndHardwareVersion();
+    void probeReadsVersionBeforeOpen();
+    void probeFailsWithoutUlc();
     void failsWhenPortDoesNotOpen();
     void failsWhenNoUlcAnswers();
     void setsCustomBaudRate();
@@ -248,6 +250,40 @@ void UlcDriverTest::reportsFirmwareAndHardwareVersion()
 
     QVERIFY(_intf->getVersion().startsWith("3.8"));
     QVERIFY(_intf->getVersion().contains("01"));
+}
+
+// Discovery probes the port so the version is known before a measurement.
+void UlcDriverTest::probeReadsVersionBeforeOpen()
+{
+    _dev->setFirmwareVersion(3, 8);
+    _dev->setHardwareVersion(1);
+    QCOMPARE(_intf->getVersion(), QStringLiteral("UnKnown"));
+
+    QVERIFY(_intf->probe());
+    QVERIFY(!_intf->isOpen());
+    QCOMPARE(_dev->state(), FakeUlcDevice::SlcanState::Config);  // left closed
+    const QString version = _intf->getVersion();
+    QVERIFY(version.startsWith("3.8"));
+    QVERIFY(version.contains("01"));
+
+    // A measurement still opens normally afterwards and reads the same
+    openWith(config(LinNodeMode::Monitor));
+    QVERIFY(_intf->isOpen());
+    QCOMPARE(_intf->getVersion(), version);
+    QVERIFY(logcapture::errors().isEmpty());
+}
+
+void UlcDriverTest::probeFailsWithoutUlc()
+{
+    _dev->setStalled(true);
+    QVERIFY(!_intf->probe());
+    QCOMPARE(_intf->getVersion(), QStringLiteral("UnKnown"));
+
+    _dev->setStalled(false);
+    _dev->setPortOpenFails(true);
+    QVERIFY(!_intf->probe());
+    QCOMPARE(_intf->getVersion(), QStringLiteral("UnKnown"));
+    QVERIFY(logcapture::errors().isEmpty());  // discovery logs, not the probe
 }
 
 void UlcDriverTest::failsWhenPortDoesNotOpen()

@@ -122,6 +122,7 @@ GrIPInterface *GrIPDriver::createOrUpdateInterface(int index, int channel_idx, G
     }
 
     GrIPInterface *scif = new GrIPInterface(this, index, channel_idx, hdl, name, fd_support, manufacturer);
+    scif->refreshCapabilities();
     addInterface(scif);
 
     return scif;

@@ -89,6 +89,12 @@ public:
     void close() override;
     bool isOpen() override;
 
+    // Opens the port just long enough to read the firmware version (and with
+    // it whether this is ElmueSoft firmware), so version, capabilities and
+    // bitrates are right before the first open(). For discovery; false if the
+    // port cannot be opened or nothing answered. Leaves the CAN channel closed.
+    bool probe();
+
     void sendMessage(const BusMessage &msg) override;
     bool readMessage(QList<BusMessage> &msglist, unsigned int timeout_ms) override;
 
@@ -116,6 +122,7 @@ private:
     bool sendConfig(const QByteArray &cmd);
     // ElmueSoft firmware, known from the USB strings or the "V" reply
     [[nodiscard]] bool isElmue() const;
+    void queryDevice();
     // Elmue: "s"/"y" for the configured bitrate and sample point, from the
     // clock and limits its "V" reply gave. Empty if they are unknown or the
     // bitrate cannot be made; the "S"/"Y" presets are used then.

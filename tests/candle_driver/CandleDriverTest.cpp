@@ -249,6 +249,10 @@ void CandleDriverTest::discoversDevice()
 
     // Discovery opened the device briefly and closed it again
     QCOMPARE(rig.dev.usbOpenCount(), 0);
+
+    // ...and what DEVICE_CONFIG said is still known (gs_usb.c / Elmue's BCD)
+    QCOMPARE(rig[0].getVersion(), fw == Fw::CandleLightF072 ? QStringLiteral("SW 2, HW 1")
+                                                            : QStringLiteral("SW 0x261001, HW 0x200"));
 }
 
 void CandleDriverTest::skipsDeviceInUse()

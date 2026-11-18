@@ -904,5 +904,18 @@ std::wstring CandleApiInterface::getPath() const
 
 QString CandleApiInterface::getVersion()
 {
-    return "1.0";
+    // DEVICE_CONFIG, read by discovery's brief open and kept by candle.c.
+    uint32_t sw = 0;
+    uint32_t hw = 0;
+    if (!_sharedDev->handle || !candle_dev_get_version(_sharedDev->handle, &sw, &hw))
+        return BusInterface::getVersion();
+
+    // candleLight sends small plain numbers, other firmwares (ElmueSoft) BCD:
+    // show those in hex as they are rather than guess a decoding.
+    const bool hex = sw > 0xFFFFu || hw > 0xFFFFu;
+    auto number = [hex](uint32_t v)
+    {
+        return hex ? QStringLiteral("0x%1").arg(v, 0, 16) : QString::number(v);
+    };
+    return QStringLiteral("SW %1, HW %2").arg(number(sw), number(hw));
 }

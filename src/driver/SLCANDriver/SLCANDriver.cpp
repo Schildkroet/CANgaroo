@@ -41,6 +41,7 @@
 #include "SLCANDriver.h"
 #include "SLCANInterface.h"
 #include "core/Backend.h"
+#include "core/Log.h"
 #include "driver/GenericCanSetupPage.h"
 #include "driver/SerialTransport/QtSerialTransport.h"
 
@@ -123,6 +124,10 @@ SLCANInterface *SLCANDriver::createOrUpdateInterface(int index, QString name, bo
 
     auto *scif = new SLCANInterface(this, index, std::move(name), fdSupport, manufacturer,
                                    QtSerialTransport::factory());
+    // Version, and on Windows (no USB strings) whether this is ElmueSoft
+    // firmware, before the first measurement. A port in use stays unknown.
+    if (!scif->probe())
+        log_info(QStringLiteral("SLCAN: %1 did not report its version").arg(scif->getName()));
     addInterface(scif);
     return scif;
 }

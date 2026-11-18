@@ -113,6 +113,10 @@ public:
 
     QString getVersion() override;
 
+    // Asks the device for this channel's capabilities (blocks ~50 ms). open()
+    // does it too; discovery calls it so they are right before the first open.
+    void refreshCapabilities();
+
     int getIfIndex();
     GrIPHandler *handler() const { return m_GrIPHandler; }
 
@@ -143,5 +147,4 @@ private:
     GrIPHandler *m_GrIPHandler;
 
     uint32_t _deviceCaps{0};
-    void refreshCapabilities();
 };

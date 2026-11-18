@@ -190,6 +190,7 @@ static bool candle_dev_interal_open(candle_device_t *dev, bool start_reads)
     if (!candle_ctrl_get_config(dev, &dev->dconf)) {
         goto close_usb;
     }
+    dev->has_dconf = true;
     candle_logf(L"device config channels=%u sw=0x%08x hw=0x%08x",
                 dev->dconf.icount + 1,
                 dev->dconf.sw_version,
@@ -245,6 +246,17 @@ bool __stdcall DLL candle_dev_open(candle_handle hdev)
 bool __stdcall DLL candle_dev_get_timestamp_us(candle_handle hdev, uint32_t *timestamp_us)
 {
 	return candle_ctrl_get_timestamp(hdev, timestamp_us);
+}
+
+bool __stdcall DLL candle_dev_get_version(candle_handle hdev, uint32_t *sw_version, uint32_t *hw_version)
+{
+    candle_device_t *dev = (candle_device_t*)hdev;
+    if (!dev->has_dconf) {
+        return false;
+    }
+    *sw_version = dev->dconf.sw_version;
+    *hw_version = dev->dconf.hw_version;
+    return true;
 }
 
 bool __stdcall DLL candle_dev_close(candle_handle hdev)

@@ -303,6 +303,46 @@ QList<QByteArray> UlcInterface::slaveTableCommands(const LinDb &ldb, PublishedSl
 
 // ── Open / Close ──────────────────────────────────────────────────────────────
 
+// Stops whatever an earlier session left running, then makes sure a uLC is
+// answering (firmware before 3.5 uses ST's generic virtual COM port VID/PID)
+// and reads its firmware and hardware version. Used by open() and probe(); the
+// results stay valid after close().
+bool UlcInterface::queryDevice()
+{
+    (void)transact(ulc::k_cmdClose);
+    const QByteArray fwReply = transact(ulc::k_cmdFwVersion).value_or(QByteArray());
+    const QByteArray fw = ulc::parseFirmwareVersion(fwReply);
+    if (fw.isEmpty())
+        return false;
+    _fwVersionCode = ulc::parseFirmwareVersionCode(fwReply);
+    QString version = QString::fromLatin1(fw);
+    if (const auto hw = transact(ulc::k_cmdHwVersion); hw && hw->startsWith('V'))
+        version += tr(" (HW %1)").arg(QString::fromLatin1(hw->mid(1)));
+    _version = version;
+    return true;
+}
+
+bool UlcInterface::probe()
+{
+    if (_isOpen)
+        return true;
+
+    _port = _transportFactory();
+    if (!_port->open(_name, SerialTransport::Settings{.baudRate = 115200}))
+    {
+        _port.reset();
+        return false;
+    }
+    _port->clear();
+    _rxLineBuffer.clear();
+    const bool answered = queryDevice();
+    _port->clear();
+    _port->close();
+    _port.reset();
+    _rxLineBuffer.clear();
+    return answered;
+}
+
 std::optional<QByteArray> UlcInterface::transact(const QByteArray &cmd, int timeout_ms)
 {
     _port->write(cmd);
@@ -375,21 +415,12 @@ void UlcInterface::open()
     _port->clear();
     _rxLineBuffer.clear();
 
-    // Stop whatever an earlier session left running, then make sure a uLC is
-    // answering: firmware before 3.5 uses ST's generic virtual COM port VID/PID.
-    (void)transact(ulc::k_cmdClose);
-    const QByteArray fwReply = transact(ulc::k_cmdFwVersion).value_or(QByteArray());
-    const QByteArray fw = ulc::parseFirmwareVersion(fwReply);
-    _fwVersionCode = ulc::parseFirmwareVersionCode(fwReply);
-    if (fw.isEmpty())
+    if (!queryDevice())
     {
         log_error(tr("uLC: no uLC firmware answered on %1").arg(_name));
         fail();
         return;
     }
-    _version = QString::fromLatin1(fw);
-    if (const auto hw = transact(ulc::k_cmdHwVersion); hw && hw->startsWith('V'))
-        _version += tr(" (HW %1)").arg(QString::fromLatin1(hw->mid(1)));
 
     // Baud rate before any slot: the firmware derives default timeouts from it.
     unsigned baud = _settings.linBaudRate();

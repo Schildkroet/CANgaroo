@@ -192,6 +192,10 @@ private slots:
     void readsFirmwareVersion_data() { addFirmwareRows(); }
     void readsFirmwareVersion();
     void failsWhenPortDoesNotOpen();
+    void probeReadsVersionBeforeOpen_data() { addFirmwareRows(); }
+    void probeReadsVersionBeforeOpen();
+    void probeRecognisesElmue();
+    void probeFailsWhenPortDoesNotOpen();
     void offeredBitratesAreWhatTheDeviceRuns_data();
     void offeredBitratesAreWhatTheDeviceRuns();
     void offeredDataBitratesAreWhatTheDeviceRuns_data();
@@ -264,6 +268,48 @@ void SlcanDriverTest::readsFirmwareVersion()
         break;
     }
     QVERIFY(!version.contains('\r'));
+}
+
+// Discovery probes the port so the version is known before a measurement:
+// the same reply open() reads, and the CAN channel stays closed.
+void SlcanDriverTest::probeReadsVersionBeforeOpen()
+{
+    QFETCH(Fw, fw);
+    Rig rig(fw);
+    QCOMPARE(rig.intf.getVersion(), QStringLiteral("UnKnown"));
+
+    QVERIFY(rig.intf.probe());
+    QVERIFY(!rig.intf.isOpen());
+    QVERIFY(!rig.dev.onBus());
+    const QString probed = rig.intf.getVersion();
+    QVERIFY(!probed.isEmpty() && probed != QStringLiteral("UnKnown"));
+
+    rig.open();
+    QVERIFY(rig.intf.isOpen());
+    QCOMPARE(rig.intf.getVersion(), probed);
+}
+
+// Where the USB strings are missing (Windows) an ElmueSoft board enumerates as
+// a CANable 2; the probe must tell it apart before the setup offers options.
+void SlcanDriverTest::probeRecognisesElmue()
+{
+    Rig rig(Fw::Elmue, SLCANInterface::Manufacturer::CANable);
+    QVERIFY(!(rig.intf.getCapabilities() & BusInterface::capability_listen_only));
+
+    QVERIFY(rig.intf.probe());
+    QVERIFY(!rig.dev.onBus());
+    QVERIFY(rig.intf.getCapabilities() & BusInterface::capability_listen_only);
+    QVERIFY(rig.intf.getDetailsStr().contains("ElmueSoft"));
+    QVERIFY(rig.intf.getVersion().startsWith("Board: Multiboard, MCU: STM32G431, "));
+}
+
+void SlcanDriverTest::probeFailsWhenPortDoesNotOpen()
+{
+    Rig rig(Fw::WeAct);
+    rig.dev.setPortOpenFails(true);
+    QVERIFY(!rig.intf.probe());
+    QCOMPARE(rig.intf.getVersion(), QStringLiteral("UnKnown"));
+    QVERIFY(logcapture::errors().isEmpty());
 }
 
 void SlcanDriverTest::failsWhenPortDoesNotOpen()

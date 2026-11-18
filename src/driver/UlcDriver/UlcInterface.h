@@ -69,6 +69,11 @@ public:
     void close() override;
     bool isOpen() override;
 
+    // Opens the port just long enough to read the firmware and hardware
+    // version, so they are known before the first open(). For discovery;
+    // false if the port cannot be opened or no uLC firmware answered.
+    bool probe();
+
     void sendMessage(const BusMessage &msg) override;
     bool readMessage(QList<BusMessage> &msglist, unsigned int timeout_ms) override;
 
@@ -115,6 +120,7 @@ private:
     // bus frames that may still arrive. Returns the reply without CR, "\a" for
     // BEL, or nothing on timeout.
     std::optional<QByteArray> transact(const QByteArray &cmd, int timeout_ms = 200);
+    bool queryDevice();
     bool loadLdf(LinDb &ldb) const;
     // Slot commands for one LDF schedule table / for the selected slave node,
     // in upload order. `published` receives the slots this node transmits.

@@ -62,6 +62,7 @@ typedef struct {
     uint8_t interfaceNumber;
 
     candle_device_config_t dconf;
+    bool has_dconf;  // dconf was read from the device; kept across close
     candle_capability_t bt_const;
     /* Per-channel capabilities: index 0..dconf.icount, maximum 8 channels */
     candle_capability_t ch_caps[8];

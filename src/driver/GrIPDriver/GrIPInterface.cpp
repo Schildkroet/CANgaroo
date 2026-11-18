@@ -319,7 +319,11 @@ int GrIPInterface::getIfIndex()
 
 QString GrIPInterface::getVersion()
 {
-    return _version;
+    if (!_version.isEmpty())
+        return _version;
+    // Requested by the driver at discovery; open() copies it into _version.
+    const QString version = m_GrIPHandler ? QString::fromStdString(m_GrIPHandler->GetVersion()) : QString();
+    return version.isEmpty() ? BusInterface::getVersion() : version;
 }
 
 void GrIPInterface::open()
