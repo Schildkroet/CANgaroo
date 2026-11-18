@@ -44,6 +44,12 @@ enum {
 // Vendor control transfer to the gs_usb interface; logged when verbose.
 static bool usb_control_msg(candle_device_t *dev, uint8_t request, uint8_t requesttype, uint16_t value, uint16_t index, void *data, uint16_t size)
 {
+    /* Closed (or never opened): there is no handle to transfer on. Callers
+     * outside the measurement, e.g. a status poll, must get an error. */
+    if (dev->usb == NULL) {
+        dev->last_error = CANDLE_ERR_NOT_OPEN;
+        return false;
+    }
     bool rc = candle_usb_control(dev->usb, request, requesttype, value, index, data, size);
     candle_logf_verbose(L"ctrl req=0x%02x type=0x%02x value=%u index=%u size=%u rc=%u",
                         request,

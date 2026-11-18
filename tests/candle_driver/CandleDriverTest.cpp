@@ -206,6 +206,8 @@ private slots:
     void deviceLeftRunningIsReconfigured();
     void reopensAfterClose_data() { addFirmwareRows(); }
     void reopensAfterClose();
+    void closedChannelDoesNotTouchDevice_data() { addFirmwareRows(); }
+    void closedChannelDoesNotTouchDevice();
 
     // frames
     void transmitsFrames_data();
@@ -222,6 +224,7 @@ private slots:
 
     // multi channel / lifecycle
     void twoChannelsShareTheDevice();
+    void closeWithoutOpenKeepsOtherChannel();
     void unplugDoesNotSpin_data() { addFirmwareRows(); }
     void unplugDoesNotSpin();
 };
@@ -387,6 +390,24 @@ void CandleDriverTest::reopensAfterClose()
     QCOMPARE(msgs.first().getId(), 0x42u);
 }
 
+// After a measurement the BUS Status window keeps polling for a moment, and its
+// context menu offers bus-off recovery: neither may reach the closed device,
+// whose USB handle is gone (a NULL dereference in WinUSB's control transfer).
+void CandleDriverTest::closedChannelDoesNotTouchDevice()
+{
+    QFETCH(Fw, fw);
+    Rig rig(fw);
+    rig.open();
+    rig[0].sendMessage(toMessage(Frame{.id = 0x123, .dlc = 2, .data = QByteArray("\x01\x02", 2)}));
+    (void)rig.pump();
+    rig[0].close();
+    QCOMPARE(rig.dev.usbOpenCount(), 0);
+
+    QCOMPARE(rig[0].getState(), uint32_t(BusInterface::state_stopped));
+    QVERIFY(!rig[0].recoverFromBusOff());
+    rig[0].sendMessage(toMessage(Frame{.id = 0x123, .dlc = 0}));
+    QCOMPARE(rig[0].getNumTxErrors(), 1);
+}
 
 // ── Frames ───────────────────────────────────────────────────────────────────
 
@@ -570,6 +591,27 @@ void CandleDriverTest::twoChannelsShareTheDevice()
     QVERIFY(rig.dev.started(1));
     QCOMPARE(rig.dev.usbOpenCount(), 1);  // channel 1 still needs it
     rig[1].close();
+    QCOMPARE(rig.dev.usbOpenCount(), 0);
+}
+
+// The BusListener calls close() also when open() failed. That channel holds
+// no reference: it must neither stop the device nor release the running
+// channel's reference (which would close the device under it).
+void CandleDriverTest::closeWithoutOpenKeepsOtherChannel()
+{
+    Rig rig(Fw::CandleLightF072, 2);
+    rig[1].close();  // never opened: device closed, no handle
+    QCOMPARE(rig.dev.usbOpenCount(), 0);
+
+    rig.open(0);
+    rig[1].close();
+    QVERIFY(rig.dev.started(0));
+    QCOMPARE(rig.dev.usbOpenCount(), 1);
+
+    rig.dev.receiveBusFrame(0, Frame{.id = 0x42, .dlc = 1, .data = QByteArray(1, '\x07')});
+    QCOMPARE(rig.pump(0).size(), 1);
+
+    rig[0].close();
     QCOMPARE(rig.dev.usbOpenCount(), 0);
 }
 

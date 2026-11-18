@@ -159,7 +159,8 @@ typedef enum {
     CANDLE_ERR_SET_TIMESTAMP_MODE  = 26,
     CANDLE_ERR_DEV_OUT_OF_RANGE    = 27,
     CANDLE_ERR_GET_TIMESTAMP       = 28,
-    CANDLE_ERR_SET_PIPE_RAW_IO     = 29
+    CANDLE_ERR_SET_PIPE_RAW_IO     = 29,
+    CANDLE_ERR_NOT_OPEN            = 30
 } candle_err_t;
 
 #pragma pack(push,1)

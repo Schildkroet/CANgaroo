@@ -576,6 +576,7 @@ void CandleApiInterface::open()
     }
 
     _sharedDev->openCount++;
+    _holdsDevice = true;
     _isOpen = true;
 }
 
@@ -586,6 +587,15 @@ bool CandleApiInterface::isOpen()
 
 void CandleApiInterface::close()
 {
+    // The BusListener calls close() also after a failed open(), which did not
+    // take a reference: don't touch the device or release another channel's.
+    // Not _isOpen: readMessage() clears that on unplug, the reference stays.
+    if (!_holdsDevice) {
+        _isOpen = false;
+        return;
+    }
+    _holdsDevice = false;
+
     candle_channel_stop(_sharedDev->handle, _channel);
     {
         // Stopping the channel discards frames the device has not sent yet
@@ -827,6 +837,9 @@ bool CandleApiInterface::updateStatistics()
 
 uint32_t CandleApiInterface::getState()
 {
+    // Polled from the GUI (BUS Status) also after the measurement
+    if (!_isOpen)
+        return BusInterface::state_stopped;
     if (_getStateFailed)
         return BusInterface::state_ok;
 
@@ -852,6 +865,8 @@ uint32_t CandleApiInterface::getState()
 
 bool CandleApiInterface::recoverFromBusOff()
 {
+    if (!_isOpen)
+        return false;
     candle_capability_t caps;
     if (!candle_channel_get_capabilities(_sharedDev->handle, _channel, &caps))
         return false;

@@ -87,6 +87,7 @@ private:
     std::atomic<bool> _isOpen;
     std::atomic<bool> _isFdEnabled;
     std::atomic<bool> _getStateFailed{false};
+    bool _holdsDevice{false};  // counted in _sharedDev->openCount; see close()
 
     std::shared_ptr<CandleSharedDevice> _sharedDev;
     MeasurementInterface _settings;
