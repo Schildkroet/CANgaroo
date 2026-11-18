@@ -132,8 +132,8 @@
   \textcolor{canblue}{\rule{0.6\textwidth}{1.5pt}}\\[3em]
 
   {\LARGE\bfseries User Manual}\\[1em]
-  {\large Manual Version 0.3}\\[0.5em]
-  {\large for CANgaroo 0.7.0}\\[4em]
+  {\large Manual Version 0.4}\\[0.5em]
+  {\large for CANgaroo 0.7.2}\\[4em]
 
   {\large Open-source automotive bus analysis software}\\[0.5em]
   {\large for CAN, CAN-FD, and LIN}\\[5em]
@@ -170,6 +170,7 @@ and logging CAN, CAN-FD, and LIN bus traffic.
   \item LIN master, slave and monitor operation on USB LIN adapters, with hardware scheduling from LDF
   \item GPIO control of digital and analog I/O on USB and GrIP adapters
   \item File replay with speed control and channel mapping
+  \item CAN gateway forwarding selected messages between two CAN interfaces
   \item Python scripting engine for automation and custom logic
   \item Protocol decoders for UDS (ISO-TP) and J1939
   \item Export to candump, Vector ASC, MDF4, PCAP, and PCAP-NG
@@ -213,11 +214,13 @@ sudo apt install build-essential qt6-base-dev qt6-serialport-dev \
      python3-dev pybind11-dev pkg-config
 
 git clone https://github.com/Schildkroet/CANgaroo.git
-cd CANgaroo/src
+cd CANgaroo
 qmake6
 make -j$(nproc)
-./cangaroo
+./bin/cangaroo
 \end{lstlisting}
+
+To run SocketCAN interfaces without root, see Section~\ref{sec:socketcanpriv}.
 
 \subsection{Windows (Build from Source)}
 
@@ -234,7 +237,13 @@ qmake6 CONFIG+=kvaser
 
 # Both optional drivers
 qmake6 CONFIG+=peakcan CONFIG+=kvaser
+
+# Zilogic USB to CAN (FD) adapters
+qmake6 CONFIG+=zscanfd
 \end{lstlisting}
+
+The Kvaser driver can also be built on Linux (with \texttt{linuxcan}); see
+\file{README.md} for the SDK locations.
 
 \subsection{First Start}
 
@@ -260,9 +269,11 @@ The main window consists of:
 
 \begin{description}[leftmargin=2em, style=nextline]
   \item[Menu bar] Access to all application functions (File, Measurement, Trace, Window, Help).
-  \item[Toolbar] Quick-access buttons: \ui{Start}, \ui{Stop}, \ui{Setup}, and \ui{Graph}.
+  \item[Toolbar] Quick-access buttons: \ui{Start}, \ui{Stop}, \ui{Setup}, \ui{Graph}
+        (standalone graph window), \ui{Gateway} (Section~\ref{sec:gateway}) and
+        \ui{Record} (Section~\ref{sec:record}).
   \item[Tab bar] Tabs, each containing an independent layout of views.
-  \item[Status bar] Displays the application version.
+  \item[Status bar] Displays the application version and the recording state.
 \end{description}
 
 \subsection{Creating and Arranging Views}
@@ -356,39 +367,109 @@ with it. These files provide the signal and message definitions needed for decod
   \endhead
   SocketCAN       & Linux    & Native Linux kernel CAN interface. Supports all network
                                devices exposed by the kernel (e.g.\ \texttt{can0},
-                               \texttt{vcan0}). \\[0.4em]
-  SLCAN           & All      & Serial Line CAN. Communicates with CAN adapters
-                               that use the SLCAN ASCII protocol over a serial port. \\[0.4em]
-  GrIP            & All      & Custom GrIP protocol adapter over serial or network. \\[0.4em]
+                               \texttt{vcan0}), including gs\_usb and PEAK USB adapters
+                               (Section~\ref{sec:socketcanpriv}). \\[0.4em]
+  SLCAN           & All      & Serial Line CAN (ASCII protocol on a USB serial port).
+                               Detected by USB ID: CANable~1 and CANable~2 (SLCAN
+                               firmware), ElmueSoft CANable~2.5 Slcan firmware (same
+                               USB ID as CANable~2, told apart by the USB manufacturer
+                               string) and WeAct Studio USB2CAN(FD). The offered bit
+                               rates follow each firmware's table; listen only is
+                               available on WeAct and ElmueSoft, not on the stock
+                               CANable firmware. \\[0.4em]
+  GrIP            & All      & GrIP protocol adapter over a serial port; also provides
+                               GPIO (Section~\ref{sec:gpio}). \\[0.4em]
   CandleAPI       & Windows  & USB CAN adapters based on the \textit{gs\_usb} protocol
-                               (candleLight, CANable, CANtact, etc.), including CAN-FD
-                               and multi-channel devices. On Linux the same adapters
-                               appear as SocketCAN interfaces. Transmitted frames are
-                               shown once the adapter confirms them. \\[0.4em]
+                               (candleLight, CANable, CANtact, CANnectivity, etc.),
+                               including CAN-FD and multi-channel devices. On Linux the
+                               same adapters appear as SocketCAN interfaces. Transmitted
+                               frames are shown once the adapter confirms them. A bus-off
+                               interface can be recovered from the CAN Status View. \\[0.4em]
   LindeAPI        & All      & USB LIN adapter (\textit{lin\_usb}, VID \texttt{0x1d50} /
                                PID \texttt{0x606f}). Multi-channel; master, slave and
                                monitor modes; schedule tables from the LDF run on the
                                adapter. Interfaces are named
                                \texttt{Linde<device>\_CH<channel>}. \\[0.4em]
-  CANBlaster      & All      & Built-in virtual loopback / message generator for
-                               development and testing. Enable via
+  uLC             & All      & uCAN USB LIN Converter (open-source
+                               \textit{LinUSBConverter}) on a virtual COM port, no extra
+                               driver needed. Detected as VID \texttt{0x1209} /
+                               PID \texttt{0x2779} (firmware 3.5 and later) or
+                               \texttt{0x0483}/\texttt{0x5740} with the USB product string
+                               \texttt{LinUSBConverter}. Master, slave and monitor modes;
+                               the master schedule comes from the LDF (up to 16 slots,
+                               one per frame ID). Baud rates 9600 and 19200 work with every
+                               firmware, 2400, 4800, 10417 and 20000 need firmware 3.x.
+                               Interfaces are named after the serial port. \\[0.4em]
+  CANBlaster      & All      & Remote CAN over UDP via a
+                               \href{https://github.com/OpenAutoDiagLabs/CANblaster}{CANblaster}
+                               server. Servers on the local network are discovered
+                               by multicast when the interfaces are scanned. Enable via
                                \menu{Measurement \textrightarrow{} Driver \textrightarrow{} CANblaster}. \\[0.4em]
   Vector          & Windows  & Vector hardware (VN series etc.) via the Qt SerialBus
-                               \texttt{vectorcan} plugin. \\[0.4em]
-  Kvaser          & Windows  & Kvaser CAN adapters. Requires \texttt{CONFIG+=kvaser}
-                               and the CANlib SDK. \\[0.4em]
+                               \texttt{vectorcan} plugin; the Vector XL Driver Library
+                               must be installed. \\[0.4em]
+  Kvaser          & All      & Kvaser CAN adapters. Requires \texttt{CONFIG+=kvaser}
+                               and the CANlib SDK (\texttt{linuxcan} on Linux). \\[0.4em]
   PEAK CAN        & Windows  & PCAN devices. Requires \texttt{CONFIG+=peakcan}
-                               and the PCAN-Basic SDK. \\[0.4em]
-  TinyCAN         & Windows  & TinyCAN adapters via Qt SerialBus. Enable via
-                               \menu{Measurement \textrightarrow{} Driver \textrightarrow{} TinyCAN}. \\
+                               and the PCAN-Basic SDK. On Linux, PEAK adapters are
+                               used through SocketCAN. \\[0.4em]
+  TinyCAN         & All      & TinyCAN adapters via Qt SerialBus. Enable via
+                               \menu{Measurement \textrightarrow{} Driver \textrightarrow{} TinyCAN}
+                               and restart CANgaroo. \\[0.4em]
+  ZsCanFd         & Windows  & Zilogic USB to CAN (FD) adapters. Requires
+                               \texttt{CONFIG+=zscanfd}; the runtime DLLs can be fetched with
+                               \menu{Measurement \textrightarrow{} Driver \textrightarrow{} Download ZsCanFd DLLs}.
+                               On Linux these adapters use SocketCAN. \\
   \bottomrule
 \end{longtable}
 
 \subsection{CAN Interface Options}
 
-\ui{Auto-Restart on Bus-Off Condition} lets the interface recover from bus-off
-by itself. The option can only be selected when the driver supports it
-(e.g.\ SocketCAN, and Candle adapters whose firmware reports the feature).
+The CAN setup page of an interface sets the bit rate, sample point and, on CAN-FD
+capable interfaces, the data bit rate. Options the driver does not support are
+greyed out.
+
+\begin{description}[leftmargin=2em, style=nextline]
+  \item[Configured by OS] CANgaroo leaves the interface configuration alone and
+        uses it as the operating system set it up (SocketCAN, TinyCAN). The other
+        options on the page then have no effect.
+  \item[Bus Monitoring Mode (Listen Only)] The interface only listens: it sends
+        no acknowledge, no error frames and no messages. The CAN Status View shows
+        the state as \textit{ready (listen only)}; on SocketCAN this is read back
+        from the kernel, so it reflects what is actually active.
+  \item[Auto-Restart on Bus-Off Condition] Lets the interface recover from
+        bus-off by itself (e.g.\ SocketCAN, and Candle adapters whose firmware
+        reports the feature).
+\end{description}
+
+\subsection{SocketCAN Privileges}
+\label{sec:socketcanpriv}
+
+To set bit rate, sample point, CAN-FD or listen only, CANgaroo configures SocketCAN
+interfaces with \texttt{ip link}, which needs \texttt{CAP\_NET\_ADMIN}. When not
+running as root, it runs the commands for all interfaces through \texttt{pkexec}
+(polkit) in one call, so there is at most one password prompt per measurement start.
+\texttt{sudo} is not used.
+
+\begin{itemize}
+  \item The \file{.deb} package installs a polkit rule that lets members of the
+        \texttt{netdev} group run exactly these commands without a prompt
+        (\texttt{sudo usermod -aG netdev \$USER}, then log in again). When building
+        from source, copy \file{packaging/10-cangaroo-socketcan.rules} to
+        \file{/etc/polkit-1/rules.d/}. Rule and application must be from the same
+        version.
+  \item If a driver rejects a setting (e.g.\ mainline gs\_usb refuses a bus-off
+        restart time), CANgaroo retries without it and logs a warning. Listen only
+        is never silently dropped.
+  \item When CANgaroo is not run as root, new SocketCAN interfaces default to
+        \ui{Configured by OS}, so nothing is changed until you clear the option.
+        A setup loaded from a workspace keeps its stored choice.
+\end{itemize}
+
+The scripts \file{scripts/setup\_can.sh} (configures every CAN interface present,
+default 500\,kbit/s with 2\,Mbit/s data rate) and \file{scripts/setup\_vcan.sh} (two
+virtual interfaces \texttt{vcan0}/\texttt{vcan1} joined by a gateway) set up
+interfaces outside CANgaroo for use with \ui{Configured by OS}.
 
 \subsection{LIN Interface Options}
 \label{sec:linsetup}
@@ -537,29 +618,33 @@ second monitor.
 
 \subsection{CAN Status View}
 
-The CAN Status View shows live bus statistics for every active interface:
+The CAN Status View (\menu{Window \textrightarrow{} New \textrightarrow{} Can Status View},
+docked as \textit{BUS Status}) shows live statistics for every interface of the
+running measurement as a tree: driver, then interface, then one row per value.
+The interface row shows the bus state (e.g.\ \textit{ready},
+\textit{ready (listen only)}, \textit{bus off}).
 
 \begin{table}[h]
   \centering
   \begin{tabularx}{\textwidth}{lX}
     \toprule
-    \textbf{Column} & \textbf{Description} \\
+    \textbf{Row} & \textbf{Description} \\
     \midrule
-    Driver / Interface & Driver name and interface identifier \\
-    State              & Bus state (Active, Warning, Passive, Bus-off) \\
-    RX / TX Frames     & Total received / transmitted frame count \\
-    RX / TX Errors     & Error frame counters \\
-    RX Overrun         & Frames lost due to receive buffer overflow \\
-    TX Dropped         & Frames dropped because the TX queue was full \\
-    Bus Load           & Estimated bus utilisation in percent \\
-    Warning / Passive / Bus-off & Escalating error state counters \\
-    Restarts           & Number of automatic bus-off recoveries \\
+    Rx Frames / Tx Frames & Total received / transmitted frame count \\
+    Rx Errors / Tx Errors & Error counters \\
+    Rx Overrun            & Frames lost due to receive buffer overflow \\
+    Tx Dropped            & Frames dropped because the TX queue was full \\
+    Load (\%)             & Estimated bus utilisation (LIN interfaces use their
+                            baud rate) \\
+    Bits                  & Total bits counted on the bus \\
     \bottomrule
   \end{tabularx}
 \end{table}
 
-Click \ui{Clear} to reset all counters. Statistics update automatically while a
-measurement is running.
+Values update every 100\,ms while a measurement runs and stay visible after it
+stops. Clearing the trace (\key{Esc}) also resets the counters. Right-click an
+interface and choose \ui{Recover from bus off} to restart an interface in bus-off,
+if its driver supports it.
 
 \subsection{Raw TX View (Message View)}
 \label{sec:rawtx}
@@ -675,8 +760,13 @@ node = int(input("Node ID (hex): "), 16)
 print(f"Using node 0x{node:02X}")
 \end{lstlisting}
 
-The \ui{Auto-run} checkbox causes the script to start automatically each time a
+The \ui{AutoRun} checkbox causes the script to start automatically each time a
 measurement begins. \ui{Run} and \ui{Stop} control the script manually.
+
+Each tab can hold one Script View. All Script Views share one Python interpreter,
+and only one script can run at a time: starting a second one while another tab's
+script is running reports \textit{A Python script is already running in another
+tab} in its console.
 
 \subsubsection{The \texttt{cangaroo} Module}
 
@@ -1051,7 +1141,7 @@ while True:
 \label{sec:replay}
 
 The Replay View loads a previously saved trace file and replays it through the
-active hardware interfaces (or the virtual loopback).
+active interfaces of a running measurement.
 
 \subsubsection{Supported Input Formats}
 
@@ -1085,6 +1175,26 @@ found in the file. Uncheck any entry to suppress those frames during replay.
 When the replay file was recorded on different interface names than those currently
 active, use the channel mapping table to redirect each recorded channel to an
 available hardware channel.
+
+\subsection{CAN Gateway}
+\label{sec:gateway}
+
+The CAN Gateway forwards selected messages from one CAN interface to another. Open
+it with the \ui{Gateway} toolbar button, which is enabled once the setup contains
+at least two CAN interfaces.
+
+\begin{enumerate}
+  \item Check \ui{Enable Gateway}.
+  \item Choose a \ui{Message} (from the loaded DBC files), a \ui{Source} and a
+        \ui{Destination} interface, and click \ui{Add}.
+  \item The rule appears under \ui{Active Rules}; its source and destination can be
+        changed there. \ui{Remove} deletes the selected rule.
+\end{enumerate}
+
+While a measurement runs, every received frame whose ID and source interface match
+a rule is sent unchanged on the rule's destination interface. Transmitted frames
+are never forwarded, so two opposite rules do not loop. Rules and the enable state
+are saved with the workspace.
 
 \subsection{LIN Control View}
 \label{sec:lincontrol}
@@ -1172,7 +1282,14 @@ CAN networks. CANgaroo's built-in parser supports:
   \item Multiplexed signals with multiplexer indicator
   \item Node definitions
   \item Message and signal attributes
+  \item J1939 databases (attribute \texttt{ProtocolType} = \texttt{"J1939"}, also as
+        default value): extended frames are matched by PGN, so a message decodes
+        whatever priority and source address the frame carries. The match stays
+        within the network that holds the database.
 \end{itemize}
+
+For big-endian (Motorola) signals, the signal tooltip in the Raw TX View shows
+the start bit as written in the DBC file.
 
 \subsection{LDF Files (LIN)}
 
@@ -1257,8 +1374,9 @@ The J1939 decoder handles the higher-layer protocol used in commercial vehicles.
 
 \subsection{Saving During Measurement}
 
-Use \menu{Trace \textrightarrow{} Save Trace to File} to write all currently buffered
-messages to a file. A format selection dialog lets you choose the output format.
+Use \menu{Trace \textrightarrow{} Save Trace to file} to write all currently buffered
+messages to a file. The file type in the save dialog selects the output format;
+an unrecognised extension is saved as Vector ASC.
 
 \subsection{Recording to File}
 \label{sec:record}
@@ -1295,7 +1413,7 @@ Changed options apply from the next recording.
   \textbf{Format} & \textbf{Extension} & \textbf{Notes} \\
   \midrule
   \endhead
-  candump log     & \file{.log}     & Plain-text format compatible with the Linux
+  candump log     & \file{.candump}, \file{.log} & Plain-text format compatible with the Linux
                                       \texttt{can-utils} \texttt{candump} tool.
                                       Supports CAN-FD (\texttt{\#\#flag}) and
                                       RTR (\texttt{\#Rn}) notation. \\[0.4em]
@@ -1303,7 +1421,7 @@ Changed options apply from the next recording.
                                       Compatible with Vector CANalyzer/CANoe and
                                       other tools. Includes date/time header and
                                       LIN enhanced checksum. \\[0.4em]
-  MDF4            & \file{.mdf}     & Binary MDF4 format with structured record
+  MDF4            & \file{.mf4}     & Binary MDF4 format with structured record
                                       layout. Supports up to 64-byte CAN-FD payloads.
                                       Compatible with analysis tools that read MDF4. \\[0.4em]
   PCAP            & \file{.pcap}    & Wireshark-compatible packet capture format. \\[0.4em]
@@ -1317,33 +1435,36 @@ asammdf) as part of the CANgaroo test suite.
 
 \subsection{Full Trace Export and Import}
 
-\menu{Trace \textrightarrow{} Export Full Trace} and \menu{Trace \textrightarrow{} Import Full Trace}
-allow saving and restoring the entire in-memory trace buffer, including messages
-that have scrolled off the view.
+\menu{Trace \textrightarrow{} Export full trace} and \menu{Trace \textrightarrow{} Import full trace}
+are placeholders and not implemented yet. Use \menu{Save Trace to file} or
+\menu{Record Trace to File} to store a trace, and the Replay View to play it back.
 
 % ══════════════════════════════════════════════════════════════════════════════
 \section{Conditional Logging}
 
-The Conditional Logging feature writes frames to a file only when a user-defined
-signal condition is met.
+Conditional logging lets the Graph View plot only while user-defined signal
+conditions hold. It is configured in the \ui{Conditional Logging} tab of the Graph
+View (Section~\ref{sec:graph}).
 
 \begin{enumerate}
-  \item Open \menu{Measurement \textrightarrow{} Conditional Logging}.
-  \item Specify an output file path.
-  \item Add one or more conditions using the signal tree browser:
-    \begin{itemize}
-      \item Select a signal from a loaded DBC database.
-      \item Choose a comparison operator (\texttt{==}, \texttt{!=}, \texttt{<},
-            \texttt{>}, \texttt{<=}, \texttt{>=}).
-      \item Enter the threshold value.
-    \end{itemize}
-  \item Select whether multiple conditions must \textit{all} be true (\ui{AND})
-        or \textit{any one} must be true (\ui{OR}).
-  \item Enable logging with the \ui{Enable} checkbox.
+  \item In the signal tree, check one or more CAN signals and click
+        \ui{Add to Condition}. (LIN signals cannot be used in conditions.)
+  \item For each row choose an \ui{Operator} (\texttt{>}, \texttt{<}, \texttt{==},
+        \texttt{>=}, \texttt{<=}, \texttt{!=}) and enter a \ui{Threshold}.
+        \ui{Live Feedback} shows the current value of the signal (red when no
+        frame has arrived recently); \ui{Remove} deletes the row.
+  \item Check \ui{Show on Graph on Trigger}.
 \end{enumerate}
 
-When the condition evaluates to true, the current frame is appended to the output
-file in the selected format.
+All conditions must be true at the same time (AND). While they are, the
+\ui{Status} reads \textit{CONDITION MET - ACTIVE}, the chart background turns green
+and new values are plotted; otherwise plotting pauses. \ui{Reset All Signals}
+clears the conditions as well.
+
+\begin{notebox}
+Conditional logging only gates the graph. To capture frames to disk, use
+\menu{Record Trace to File} (Section~\ref{sec:record}).
+\end{notebox}
 
 % ══════════════════════════════════════════════════════════════════════════════
 \section{Application Settings}
@@ -1359,6 +1480,10 @@ preferences. The dialog is organised into four groups.
     \toprule
     \textbf{Setting} & \textbf{Description} \\
     \midrule
+    Use native system styling
+              & On by default. Uses the selected style together with the desktop
+                theme (e.g.\ GNOME/Adwaita) instead of CANgaroo's own Light/Dark
+                palette. Turn it off for the bundled Fusion-based theme. \\
     Theme     & Qt style applied to the whole application.
                 The available entries depend on the platform
                 (e.g.\ \textit{Fusion}, \textit{Windows}, \textit{kvantum}). \\
@@ -1408,6 +1533,8 @@ preferences. The dialog is organised into four groups.
         \ui{Absolute (UTC)} (wall-clock in UTC),
         \ui{Relative} (seconds since measurement start), or
         \ui{Delta} (time since the previous frame of the same ID). \\
+    Data display
+      & Shows the data column as \ui{Hex} bytes or as \ui{ASCII} text. \\
     Preferred save format
       & Pre-selects the output format in the \menu{Save Trace} dialog.
         Choices: Vector ASC, Vector MDF4, Linux candump, PCAP, PCAPng. \\
@@ -1529,7 +1656,7 @@ preferences. The dialog is organised into four groups.
   \item Open a Script View (\menu{Window \textrightarrow{} New \textrightarrow{} Script View}).
   \item Write or load your Python script.
   \item Press \ui{Run}. The console pane shows output and any errors.
-  \item Enable \ui{Auto-run} to have the script start automatically with each
+  \item Enable \ui{AutoRun} to have the script start automatically with each
         measurement.
 \end{enumerate}
 
@@ -1540,7 +1667,9 @@ preferences. The dialog is organised into four groups.
 
   \item[Interface not appearing in Setup Dialog]
     Click \menu{Measurement \textrightarrow{} Reload Interfaces}. On Linux,
-    ensure the CAN interface is up (\texttt{ip link set can0 up type can bitrate 500000}).
+    check that the kernel created the interface (\texttt{ip link show type can}).
+    CANBlaster and TinyCAN must first be enabled in
+    \menu{Measurement \textrightarrow{} Driver}.
     Check the Log View for driver error messages.
 
   \item[No messages received]
@@ -1560,7 +1689,13 @@ preferences. The dialog is organised into four groups.
 
   \item[Python script does not start]
     Verify Python 3 is installed and on the system \texttt{PATH}. Check the
-    console pane for import errors or syntax exceptions.
+    console pane for import errors or syntax exceptions. If it reports that a script
+    is already running in another tab, stop that script first.
+
+  \item[Password prompt on every measurement start (SocketCAN)]
+    Install the polkit rule and join the \texttt{netdev} group
+    (Section~\ref{sec:socketcanpriv}), or set the interfaces to
+    \ui{Configured by OS} and configure them with \file{scripts/setup\_can.sh}.
 
   \item[Replay file not loading]
     Ensure the file extension matches one of the supported formats (\file{.log},

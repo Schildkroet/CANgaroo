@@ -175,6 +175,11 @@ frame per transfer.
   Linux/macOS, WinUSB by GUID on Windows. The GUIDs are duplicated in
   `LindeSharedDevice.h` and `AiodeApi.hpp`; keep them in sync with the firmware.
 
+  `CandleApiDriver` speaks gs_usb in portable C (`api/candle.c`) over the USB
+  seam `api/candle_usb.h`. Only `api/candle_usb_winusb.c` (WinUSB/SetupAPI,
+  incl. the gs_usb GUID above) is Windows-specific; the unit tests link a
+  simulated gs_usb device in its place.
+
 ---
 
 ## lin_usb (LIN)

@@ -12,9 +12,9 @@
 | **Vector** | — | ✅ | VN-series and other Vector devices via Qt serialbus (XL Driver Library required at runtime), CAN FD supported |
 | **TinyCAN** | ✅ | ✅ | TinyCAN USB adapters via Qt serialbus (enable in Measurement > Driver menu) |
 | **Candlelight / CANable / CANnectivity** | ✅ | ✅ | CANable (Candlelight firmware), MKS CANable, cantact, CANnectivity, and other gs_usb devices. Multi-channel devices supported. CAN FD supported. |
-| **SLCAN** | ✅ | ✅ | CANable (SLCAN firmware), Arduino CAN shields |
+| **SLCAN** | ✅ | ✅ | CANable 1 / 2 (SLCAN firmware), ElmueSoft CANable 2.5 Slcan firmware, WeAct Studio USB2CAN(FD); detected by USB ID |
 | **CANblaster** | ✅ | ✅ | UDP-based remote CAN via [CANblaster](https://github.com/OpenAutoDiagLabs/CANblaster) |
-| **GrIP** | ✅ | ✅ | GrIP protocol |
+| **GrIP** | ✅ | ✅ | GrIP protocol adapters on a serial port, incl. GPIO |
 | **lin_usb (LindeAPI)** | ✅ | ✅ | USB LIN adapter (VID `0x1d50` / PID `0x606f`). Multi-channel. Master, slave, and monitor modes. Hardware LIN scheduling via LDF. |
 | **uLC (uCAN USB LIN Converter)** | ✅ | ✅ | Open-source USB LIN adapter ([LinUSBConverter](https://github.com/uCAN-LIN/LinUSBConverter)) on a virtual COM port (VID `0x1209` / PID `0x2779` since firmware 3.5, `0x0483` / `0x5740` before), no extra driver needed. Master, slave, and monitor modes; master schedule from LDF (up to 16 slots). |
 | **aio_usb (aiode)** | ✅ | ✅ | Digital I/O and analog inputs on the same USB adapter (VID `0x1d50` / PID `0x606f`), controlled from the GPIO Control window |
@@ -42,7 +42,7 @@
 
 * 🇩🇪 German
 * 🇺🇸 English
-* 🇪🇸 Spain
+* 🇪🇸 Spanish
 * 🇨🇳 Chinese
 
 ## 🛠️ Building
@@ -181,6 +181,14 @@ pip install canconvert
 
 # Convert ARXML to DBC
 canconvert TCU.arxml TCU.dbc
+```
+
+## 📖 Manual
+
+The user manual is [`docs/manual.tex`](docs/manual.tex) (LaTeX). Build the PDF with:
+
+```bash
+cd docs && pdflatex -output-directory=build manual.tex && pdflatex -output-directory=build manual.tex
 ```
 
 ## 📥 Download
