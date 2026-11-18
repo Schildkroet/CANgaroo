@@ -60,10 +60,12 @@ QString CanTiming::getSamplePointFDStr(unsigned samplePoint)
 
 QString CanTiming::getTitle() const
 {
-    QString format = isCanFD() ? "%1/%3(FD) kBit/s, sample point %2" : "%1 kBit/s, sample point %2";
-    return format.arg(
-        QString::number(getBitrate()/1000, 'f', 2),
-        getSamplePointStr(getSamplePoint()),
-        QString::number(getBitrateFD()/1000, 'f', 2)
-    );
+    const QString bitrate = QString::number(getBitrate() / 1000.0, 'f', 2);
+    const QString samplePoint = getSamplePointStr(getSamplePoint());
+    if (isCanFD())
+    {
+        return QStringLiteral("%1/%2(FD) kBit/s, sample point %3")
+            .arg(bitrate, QString::number(getBitrateFD() / 1000.0, 'f', 2), samplePoint);
+    }
+    return QStringLiteral("%1 kBit/s, sample point %2").arg(bitrate, samplePoint);
 }
