@@ -439,6 +439,7 @@ void MainWindow::applyActionIcons()
     setIcon(ui->actionStop_Measurement,   "media-playback-stop");
     setIcon(ui->actionReload_Interfaces,  "view-refresh");
     setIcon(ui->actionSetup,              "preferences-other");
+    setIcon(ui->actionHardware,           "drive-harddisk-usb");
     setIcon(ui->actionAbout,              "help-about");
     setIcon(ui->action_TraceClear,        "edit-clear");
     setIcon(ui->actionSave_Trace_to_file, "document-save");

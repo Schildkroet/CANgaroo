@@ -21,5 +21,6 @@
         <file>assets/icons/preferences-other-symbolic.svg</file>
         <file>assets/icons/help-about-symbolic.svg</file>
         <file>assets/icons/edit-clear-symbolic.svg</file>
+        <file>assets/icons/drive-harddisk-usb-symbolic.svg</file>
     </qresource>
 </RCC>
