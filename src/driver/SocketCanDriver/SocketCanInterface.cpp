@@ -352,14 +352,16 @@ std::optional<bool> SocketCanInterface::isListenOnlyActive()
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
 
-// Read CAN state directly via a raw RTNETLINK RTM_GETLINK request.
-// Used as the primary implementation on libnl < 3.2.22 and as a fallback
-// on newer libnl when rtnl_link_can_state() returns an error.
-static int can_state_from_rtnetlink(int ifindex, uint32_t *state)
+// Raw RTNETLINK RTM_GETLINK request for one interface: calls visit(attr) for
+// every attribute in its IFLA_LINKINFO / IFLA_INFO_DATA nest (the IFLA_CAN_*
+// ones for a CAN link). For what libnl does not parse. False if the link could
+// not be read.
+template <typename Visit>
+static bool visit_can_link_attributes(int ifindex, Visit &&visit)
 {
     int fd = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
     if (fd < 0)
-        return -1;
+        return false;
 
     struct
     {
@@ -375,14 +377,14 @@ static int can_state_from_rtnetlink(int ifindex, uint32_t *state)
     if (send(fd, &req, req.hdr.nlmsg_len, 0) < 0)
     {
         close(fd);
-        return -1;
+        return false;
     }
 
     char buf[16384];
     ssize_t len = recv(fd, buf, sizeof(buf), 0);
     close(fd);
     if (len < 0)
-        return -1;
+        return false;
 
     for (auto *nlh = reinterpret_cast<struct nlmsghdr *>(buf);
          NLMSG_OK(nlh, static_cast<uint32_t>(len));
@@ -412,17 +414,44 @@ static int can_state_from_rtnetlink(int ifindex, uint32_t *state)
                 auto *ca = reinterpret_cast<struct rtattr *>(RTA_DATA(info));
                 int ca_len = static_cast<int>(RTA_PAYLOAD(info));
                 for (; RTA_OK(ca, ca_len); ca = RTA_NEXT(ca, ca_len))
-                {
-                    if (ca->rta_type != IFLA_CAN_STATE)
-                        continue;
-                    *state = *reinterpret_cast<uint32_t *>(RTA_DATA(ca));
-                    return 0;
-                }
+                    visit(*ca);
             }
         }
+        return true;
     }
 
-    return -1;
+    return false;
+}
+
+// Read CAN state directly via a raw RTNETLINK RTM_GETLINK request.
+// Used as the primary implementation on libnl < 3.2.22 and as a fallback
+// on newer libnl when rtnl_link_can_state() returns an error.
+static int can_state_from_rtnetlink(int ifindex, uint32_t *state)
+{
+    bool found = false;
+    visit_can_link_attributes(ifindex, [&](const struct rtattr &ca)
+    {
+        if (ca.rta_type == IFLA_CAN_STATE && !found)
+        {
+            std::memcpy(state, RTA_DATA(&ca), sizeof(*state));
+            found = true;
+        }
+    });
+    return found ? 0 : -1;
+}
+
+// Whether the controller can do CAN FD at all. The kernel adds the data phase
+// limits only for FD capable devices (can_fill_info()), whether FD is switched
+// on or not; MTU 72 only says it is switched on right now. Empty if unreadable.
+static std::optional<bool> can_fd_hardware_from_rtnetlink(int ifindex)
+{
+    bool fd = false;
+    const bool read = visit_can_link_attributes(ifindex, [&](const struct rtattr &ca)
+    {
+        if (ca.rta_type == IFLA_CAN_DATA_BITTIMING_CONST || ca.rta_type == IFLA_CAN_DATA_BITRATE_CONST)
+            fd = true;
+    });
+    return read ? std::optional<bool>(fd) : std::nullopt;
 }
 
 #if (LIBNL_CURRENT <= 216)
@@ -520,10 +549,15 @@ bool SocketCanInterface::readConfig()
 bool SocketCanInterface::readConfigFromLink(rtnl_link *link)
 {
     _config.state = state_unknown;
-    _config.supports_canfd = (rtnl_link_get_mtu(link) == 72);
+    _config.supports_canfd = (rtnl_link_get_mtu(link) == CANFD_MTU);
     _config.supports_timing = rtnl_link_is_can(link);
     if (_config.supports_timing)
     {
+        // The hardware does not change: ask the kernel once per interface
+        if (!_canFdHardware)
+            _canFdHardware = can_fd_hardware_from_rtnetlink(rtnl_link_get_ifindex(link));
+        _config.supports_canfd = _config.supports_canfd || _canFdHardware.value_or(false);
+
         rtnl_link_can_freq(link, &_config.base_freq);
         rtnl_link_can_get_ctrlmode(link, &_config.ctrl_mode);
         rtnl_link_can_get_bittiming(link, &_config.bit_timing);

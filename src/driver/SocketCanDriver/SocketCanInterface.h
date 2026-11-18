@@ -27,6 +27,7 @@
 
 #include <QMutex>
 #include <atomic>
+#include <optional>
 
 #include <linux/can/netlink.h>
 
@@ -124,6 +125,7 @@ private:
     };
 
     int _idx;
+    std::optional<bool> _canFdHardware;  // controller can do CAN FD, see readConfigFromLink()
     bool _isOpen;
     bool _bitrateFallbackLogged = false;
     int _fd;
